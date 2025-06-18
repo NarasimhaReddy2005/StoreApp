@@ -1,6 +1,4 @@
-import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import type { Product } from "../../app/Models/product";
 import {
   Button,
   Divider,
@@ -13,17 +11,17 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { useFetchProductDetailsQuery } from "./catalogAPI";
 
 export default function ProductDetails() {
-  const { id } = useParams();
-  const [product, setProduct] = useState<Product | null>(null);
-  useEffect(() => {
-    fetch(`https://localhost:5001/api/products/${id}`)
-      .then((response) => response.json())
-      .then((data) => setProduct(data))
-      .catch((error) => console.log(error));
-  }, [id]); // When id changes component reloads
-  if (!product) return <div>Loading...</div>;
+  const { id } = useParams(); // Type is string | undefined (since it comes from the URL we can't
+  // guarantee that it will always be defined)
+
+  const { data: product, isLoading } = useFetchProductDetailsQuery(
+    id ? parseInt(id) : 0
+  );
+
+  if (!product || isLoading) return <div>Loading...</div>;
 
   const ProductDetails = [
     { label: "Name", value: product.name },
