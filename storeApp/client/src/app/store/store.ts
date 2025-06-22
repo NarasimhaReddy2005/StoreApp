@@ -5,6 +5,7 @@ import counterReducer, {
 import { useDispatch, useSelector } from "react-redux";
 import { catalogAPI } from "../../features/catalog/catalogAPI";
 import { uiSlice } from "../layout/uiSlice";
+import { errorApi } from "../../features/about/errorApi";
 
 export function configureTheStore() {
   return legacy_createStore(counterReducer);
@@ -13,11 +14,12 @@ export function configureTheStore() {
 export const store = configureStore({
   reducer: {
     [catalogAPI.reducerPath]: catalogAPI.reducer,
+    [errorApi.reducerPath]: errorApi.reducer,
     counter: counterSlice.reducer,
     ui: uiSlice.reducer,
   },
   middleware: (getDefaultMiddleware) =>
-    getDefaultMiddleware().concat(catalogAPI.middleware),
+    getDefaultMiddleware().concat(catalogAPI.middleware, errorApi.middleware),
 });
 
 // Infer the `RootState`,  `AppDispatch`, and `AppStore` types from the store itself
