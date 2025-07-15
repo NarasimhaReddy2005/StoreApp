@@ -21,7 +21,7 @@ var app = builder.Build();
 app.UseMiddleware<ExceptionMiddleware>(); // must be right after building app so any exception will be caught
 app.UseCors(opt =>
 {
-    opt.AllowAnyHeader().AllowAnyMethod().WithOrigins("https://localhost:3000");
+    opt.AllowAnyHeader().AllowAnyMethod().AllowCredentials().WithOrigins("https://localhost:3000");
 });
 // Configure the HTTP request pipeline.
 app.MapControllers();

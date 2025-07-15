@@ -15,5 +15,6 @@ public class StoreContext(DbContextOptions options) : DbContext(options) // prim
 // we need to pass options to DbContext constructor to pass our connection string to EF
 {
     public required DbSet<Product> Products { get; set; }
+    public required DbSet<Basket> Baskets { get; set;  }
 }
 

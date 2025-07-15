@@ -9,6 +9,7 @@ import { router } from "../routes/Routes";
 
 const customBaseQuery = fetchBaseQuery({
   baseUrl: "https://localhost:5001/api",
+  credentials: "include"
 });
 
 type ErrorResponse = string | { title: string } | { errors: string[] };
@@ -37,6 +38,11 @@ export const baseQueryWithErrorHandling = async (
         : results.error.status;
     const responseData = results.error.data as ErrorResponse;
 
+    if (results.error.status === "FETCH_ERROR") {
+      router.navigate("/server-not-found");
+      return results;
+    }
+
     switch (originalStatus) {
       case 400:
         if (typeof responseData === "string") toast.error(responseData);
@@ -55,6 +61,7 @@ export const baseQueryWithErrorHandling = async (
         if (typeof responseData === "object")
           router.navigate("/server-error", { state: { error: responseData } });
         break;
+
       default:
         break;
     }
