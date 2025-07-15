@@ -1432,3 +1432,1598 @@ Inside Navbar we can remove props we are passing in and use the useAppSelector h
   {darkMode ? <DarkMode /> : <LightMode sx={{ color: "yellow" }} />}
 </IconButton>
 ```
+
+# Error Handling
+
+-Error handling and exceptions
+-Middleware
+-HTTP response errors
+-Client side errors
+
+We need to send information of any exception to the client so user know something went wrong. We use middleware for this whish resides in program.cs file.
+
+First up we are going to use exception handler middleware to catch any unhandled exceptions and log them to the console. We exceptions happen in http request pipeline there are several middleware that can catch them and thrown up the middleware tree until it reaches the exception handler middleware.
+
+Middleware pipeline: starts wit request going through the middleware all the way the following in order and backwards in reverse order giving response:
+-Exception handler
+-Routing
+-CORS
+-Authentication
+-Authorization
+-Endpoint
+
+Here are few ranges of responses indicating the status of the request:
+200 Range: Ok
+300 Range: Redirection
+400 Range: Client Error
+500 Range: Server Error
+
+## Creating a controller that has endpoints just to return error responses
+
+### !! Back to server side !!
+
+In MVC view basically is html sent in response to the client.
+
+Create a new controller - BaseApiController.cs
+We will get a boilerplate code for the controller. We will use this controller to return error responses.
+
+### [Route("api/[controller]")]
+
+This is a Route Attribute, used to define the base route for the controller.
+
+- Route(...) tells ASP.NET Core how to map HTTP requests to this controller.<br>
+- `api/[controller]` is a placeholder route.
+
+- `[controller]` is a token that gets replaced at runtime with the controller's class name without the "Controller" suffix.<br>
+- In this case, class name is BaseApiController, so [controller] becomes baseapi (case-insensitive by convention).
+
+- Full route becomes: api/baseapi
+
+### [ApiController]
+
+This is an attribute that:
+
+- Marks the class as an API controller.
+- Enables automatic model validation, binding source inference, and 400 Bad Request responses on validation failures.
+- This attribute is required to use many of the "Web API" features of ASP.NET Core (like [FromBody], [FromQuery], etc., without explicitly specifying them).
+
+[Something] is shorthand for using an attribute class named SomethingAttribute.
+The square brackets [] are used to apply the attribute.
+
+### Coming back
+
+We want to centralize api error handling in this controller. So we make this as base controller for all other controllers i.e., we make them inherit from this controller.
+
+Now lets create a new class for all end points:
+
+```csharp
+using System;
+using Microsoft.AspNetCore.Mvc;
+
+namespace API.Controllers;
+
+public class BuggyController : BaseApiController
+{
+    // endpoint 1
+    [HttpGet("not-find")] // When tried to fetch a product that was not in database
+    public IActionResult GetNotFound() // don't return a specific type thus used for Http request
+    {
+        return NotFound(); // returns not found API
+    }
+
+    // endpoint 2
+    [HttpGet("bad-request")] // a client side error that occurs in API server (consequences in server side)
+    public IActionResult GetBadRequest()
+    {
+        return BadRequest("This is not a good request"); // returns along with msg
+    }
+
+    // endpoint 3
+    [HttpGet("unauthorized")]
+    public IActionResult GetUnauthorized()
+    {
+        return Unauthorized();
+    }
+
+    // endpoint 4
+    [HttpGet("validation-error")]
+    public IActionResult GetValidationError() // for validating CURD operations
+    // [ApiController] -> actually has this included that validates parameters from client
+    // But for now lets simulate
+    {
+        // ModelState is an object that tracks errors for validation.
+        // Used by api controller.
+        // Stores errors as key value pairs
+        ModelState.AddModelError("Problem1", "This is err1");
+        ModelState.AddModelError("Problem2", "This is err2");
+        return ValidationProblem();
+    }
+
+    [HttpGet("server-error")] // An actual exception
+    public IActionResult GetServerError()
+    {
+        throw new Exception("This is a server error");
+    }
+}
+```
+
+To check the endpoints we can use Postman and check for {{url}}/api/buggy/not-found, {{url}}/api/buggy/bad-request, etc. Url is the base url of the API given as global variable in Postman.
+
+## Getting the needed part of server error (Exception)
+
+In mordern versions of .net we have hidden 'app.UseDeveloperExceptionPage()' middleware.<br>
+This middleware is used to display detailed error information in the browser when an unhandled exception occurs during the request processing pipeline. It is typically used in development environments to help developers diagnose and fix issues in their code.<br>
+It is not recommended to use this middleware in production environments, as it can expose sensitive information about the application and its configuration.
+
+Thus we need to create a custom middleware to handle exceptions and return a standardized error response and override the default exception handling behavior.
+
+Plus we can send problem details in JSON format for easy usage to display on client side.
+
+## Middleware (Middleware Pipeline)
+
+Exception handling middleware will be at starting so that when any exception is thrown we will finally get back to here.
+![alt text](ReadmeImg/image5.png)
+
+Create a new folder `Middleware` to keep this. As mentioned first lets create an exception middleware.
+<br>
+ASP.Net provides an interface and using quick fix we can get snippet.
+
+```csharp
+namespace API.Middleware;
+
+public class ExceptionMiddleware(IHostEnvironment env, ILogger<ExceptionMiddleware> logger) : IMiddleware
+// Added parameters manually
+// One to inject environment other to log info into console
+// A logger is a tool or component in a program that is used to
+// record information (called logs) about the program’s execution
+{
+    public async Task InvokeAsync(HttpContext context, RequestDelegate next)
+    {
+        try
+        {
+            await next(context); //Next middleware
+        }
+        catch (Exception ex)
+        {
+
+            await HandleException(context, ex);
+        }
+    }
+
+    private async Task HandleException(HttpContext context, Exception ex)
+    {
+        throw new NotImplementedException();
+    }
+}
+
+```
+
+Injecting env: Supplying environment variables to a program
+Environment: Key-value settings affecting a process
+
+- Keeps config out of code (no hardcoded secrets)
+
+HttpContext is an object that holds all the information about a single HTTP request and response in a web application. It includes request, response, user, session, items, and connection.
+
+Here is our HandleException Implementation
+
+```csharp
+
+    private async Task HandleException(HttpContext context, Exception ex)
+    {
+        logger.LogError(ex, ex.Message); // logs exception into stacktrace
+        context.Response.ContentType = "application/json"; // response returned as JSON
+        context.Response.StatusCode = (int)HttpStatusCode.InternalServerError; // Getting status code
+
+        var response = new ProblemDetails
+        {
+            Status = 500, // Specially for Exceptions (Server side) since this is reached after error in inside oprations
+            Detail = env.IsDevelopment() ? ex.StackTrace?.ToString() : null, //Stacktrace can be null
+            Title = ex.Message
+        };
+        var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }; // since we use it
+        var json = JsonSerializer.Serialize(response, options);
+
+        await context.Response.WriteAsync(json); //Sends the JSON error response back to the client.
+    }
+```
+
+#### NOTE:
+
+Now this middle ware has to be declared as a service in program.cs file even though we are implementing IMiddleware, because we are triying to injecting env and logger and we can only inject if it is a service.
+
+#### How are we doing it
+
+Scoped means service is created when requested and stays for entirity of request
+Transient means service is created and used where it is needed and then disposed
+Other is singleton => Service created and start of application and stops with application
+
+```csharp
+builder.Services.AddTransient<ExceptionMiddleware>();
+```
+
+Must be right after building app so any exception will be caught
+
+```csharp
+app.UseMiddleware<ExceptionMiddleware>();
+```
+
+All we are doing here is displaying error.
+
+### Back to Client Side
+
+Writing error handling demo in about page.
+
+```ts
+import { createApi } from "@reduxjs/toolkit/query/react";
+import { baseQueryWithErrorHandling } from "../../app/api/baseAPI";
+
+export const errorApi = createApi({
+  reducerPath: "errorApi",
+  baseQuery: baseQueryWithErrorHandling,
+  endpoints: (builder) => ({
+    get400Error: builder.query<void, void>({
+      query: () => ({ url: "buggy/bad-request" }),
+    }),
+    get401Error: builder.query<void, void>({
+      query: () => ({ url: "buggy/unauthorized" }),
+    }),
+    get404Error: builder.query<void, void>({
+      query: () => ({ url: "buggy/not-found" }),
+    }),
+    get500Error: builder.query<void, void>({
+      query: () => ({ url: "buggy/server-error" }),
+    }),
+    getValidationError: builder.query<void, void>({
+      query: () => ({ url: "buggy/validation-error" }),
+    }),
+  }),
+});
+
+export const {
+  useLazyGet400ErrorQuery,
+  useGet401ErrorQuery,
+  useLazyGet404ErrorQuery,
+  useGet500ErrorQuery,
+  useLazyGetValidationErrorQuery,
+} = errorApi;
+```
+
+Add this to store.
+
+## Creating a component to test API response errors
+
+(In aboutPage.tsx)
+
+Create button for each hook to test this.
+For each error to be notified we use `NPM Toastify` to notify errors to user.
+
+<a>https://www.npmjs.com/package/react-toastify</a>
+
+In client folder
+
+```bash
+$ npm install --save react-toastify
+```
+
+To use it anywhere in application we need to add it to main.tsx
+
+```tsx
+<StrictMode>
+  <Provider store={store}>
+    <ToastContainer position="bottom-right" theme="coloured" />
+    <RouterProvider router={router} />
+  </Provider>
+</StrictMode>
+```
+
+Also we need to check in npm modules for react-toastify/dist/ReactToastify.css and import it to main.tsx.
+
+Now in baseAPI instead of just printing error to console, lets add a switch to display.
+for adding tosts we simply do this:
+
+```ts
+if (results.error) {
+  const { status, data } = results.error;
+  console.log(results.error);
+  switch (status) {
+    case 400:
+      toast.error(data.title);
+      break;
+    case 401:
+      toast.error(data.title);
+      break;
+    default:
+      break;
+  }
+}
+```
+
+Now check 401 button, and it works. But 400 don't. This's because it has folling format:
+
+```console
+{status: 'PARSING_ERROR',
+originalStatus: 400,
+data: 'This is not a good request',
+error: `SyntaxError: Unexpected token 'T', "This is no"... is not valid JSON`}
+```
+
+We got a PARSING_ERROR since RTK Query uses JSON and we are returning formatting response as text.
+
+But we still have original status, so we can use combanation of that number and data to get result...
+
+```ts
+const originalStatus =
+  results.error.status === "PARSING_ERROR" && results.error.originalStatus
+    ? results.error.originalStatus
+    : results.error.status;
+console.log(originalStatus);
+const responseData = results.error.data;
+switch (originalStatus) {
+  case 400:
+    toast.error(responseData as string);
+    break;
+  case 401:
+    toast.error(responseData.title);
+    break;
+  default:
+    break;
+}
+```
+
+It works but we have to deal with typescript error norms near responseData.title. This is because type script does not know what is comming in with responseData. So we look at log again so that we can define a type for it and specify what it could be and depending on type how to handle that thing. We call it `type gaurd`.
+
+Looking at all 5 types we get following types:
+
+```ts
+type ErrorResponse = string | { title: string } | { errors: string[] };
+```
+
+Plus for 401 error and 500.
+
+```ts
+if (typeof responseData === "object" && "title" in responseData)
+  toast.error(responseData.title);
+```
+
+Type script shows error for title otherwise.<br>
+For 400 and vaidation error
+
+```tsx
+case 400:
+if (typeof responseData === "string") toast.error(responseData);
+else if ("errors" in responseData) {
+  toast.error("Validation error");
+} else toast.error(responseData.title);
+break;
+```
+
+For 404 data is null
+
+```tsx
+case 404:
+  if (responseData === null) toast.error("Not found");
+  break;
+```
+
+### Validation error
+
+Instead of just say that it is validation error lets throw an error objects.
+
+```tsx
+throw Object.values(responseData.errors).flat().join(", ");
+```
+
+Here values are extracted from key value pairs and are then made into an array (flat), which are joined with ', '. This is thrown here and caught in `AboutPage.tsx` where it is logged into console.
+<br> But if we look in web console we can see that this error is coming from `page bundle` instead of our `AboutPage` component which is not what we want. So in AboutPage.tsx we will `unwrap` trigerValidationError's return in Aboutpage itself.
+<br> Now we gotcha make errors iteratable again. So in AboutPage lets create a asynchronous helper function since errors are asynchronus in nature and we had the error line in error.message.
+
+```tsx
+const getValidationError = async () => {
+  try {
+    await triggerValidationError().unwrap();
+  } catch (error: any) {
+    const errorArray = error.message.split(", ");
+    console.log(errorArray);
+  }
+};
+```
+
+The any keyword in TypeScript is a special type that effectively opts out of type checking for a variable. It tells the compiler:
+<br>
+"Trust me, I know what I'm doing."
+
+But since it is better to give a type instead. We change it to unknown and we will now get error at error in `error.message.split(", ")`. So we again need to keep typegaurd here.
+
+To remove it we wrap spliting and logging into following if condition:
+
+```tsx
+if (error && typeof error === "object" && "message" in error)
+```
+
+Now new error pops that 'error.message' is unknown. So we need add the following to if condition:
+
+```tsx
+typeof (error as { message: unknown }).message === "string";
+```
+
+| Part                                      | Explanation                                                                                             |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `error as { message: unknown }`           | You’re telling TypeScript to treat `error` as an object that has a `message` property of type `unknown` |
+| `(error as { message: unknown }).message` | Accessing the `message` property after casting                                                          |
+| `typeof ... === "string"`                 | Checks if the type of `message` at runtime is a string                                                  |
+
+Also we need to tell Type script to treet error as an object having message attribute of type string.
+<br>
+Finally the code block looks like this:
+
+```tsx
+const getValidationError = async () => {
+  try {
+    await triggerValidationError().unwrap();
+  } catch (error: unknown) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "message" in error &&
+      typeof (error as { message: unknown }).message === "string"
+    ) {
+      const errorArray = (error as { message: string }).message.split(", ");
+      console.log(errorArray);
+    }
+  }
+};
+```
+
+#### Why not simply throwing entire error.messages object??
+
+Yes, you absolutely can throw an object in JavaScript or TypeScript — and it's valid syntax.
+
+⚠️ BUT — Why It’s Not Recommended
+Although valid, throwing a plain object instead of an Error instance breaks standard error handling:
+
+- Stack traces are missing or unclear
+- IDE/debugger tools work better with Error objects
+- Some tools assume errors are instanceof Error
+
+Lets display them directly to user. For instance we can use useState.
+
+```tsx
+const [validationErrors, setValidationErrors] = useState<string[]>([]);
+
+{
+  validationErrors.length > 0 && (
+    <Alert severity="error">
+      <AlertTitle>Validation errors</AlertTitle>
+      <List>
+        {validationErrors.map((err) => (
+          <ListItem key={err}>{err}</ListItem>
+        ))}
+      </List>
+    </Alert>
+  );
+}
+```
+
+## Redirecting error into seperate component (instead of toast)
+
+Inside app folder lets create new folder/file errors. Instead of toasting 500 error, we navigate to ServerError.tsx using router. It allows us to pass states to the navigated component through second parameter.
+
+```tsx
+  case 500:
+    if (typeof responseData === "object")
+      router.navigate('/server-error', {state: {error: responseData}})
+    break;
+```
+
+Then add route to Routes.tsx. For displying error ServerError.tsx lools like this
+
+```tsx
+import { Divider, Paper, Typography } from "@mui/material";
+import { useLocation } from "react-router-dom";
+
+const ServerError = () => {
+  const { state } = useLocation();
+
+  return (
+    <Paper>
+      {state.error ? (
+        <>
+          <Typography
+            gutterBottom
+            variant="h3"
+            sx={{ px: 4, pt: 2 }}
+            color="secondary"
+          >
+            {state.error.title}
+          </Typography>
+          <Divider />
+          <Typography variant="body1" sx={{ p: 4 }}>
+            {state.error.detail}
+          </Typography>
+        </>
+      ) : (
+        <Typography variant="h5" gutterBottom>
+          Server error
+        </Typography>
+      )}
+    </Paper>
+  );
+};
+
+export default ServerError;
+```
+
+#### NOTE:
+
+If your backend is something like ASP.NET Core, Django, Flask, etc., and a 500 Internal Server Error happens, the error response might look like:
+
+```json
+{
+  "title": "Internal Server Error",
+  "detail": "An unexpected error occurred on the server."
+}
+```
+
+So in your frontend (RTK Query):
+
+```tsx
+results.error.data = {
+  title: "Internal Server Error",
+  detail: "An unexpected error occurred on the server.",
+};
+```
+
+And then:
+
+```tsx
+const responseData = results.error.data as ErrorResponse;
+```
+
+So when passed in `router.navigate('/server-error', {state: {error: responseData}})` it still ha details in it. Which is what we had in here (ServerError):
+
+```tsx
+<Typography variant="body1" sx={{ p: 4 }}>
+  {state.error.detail}
+</Typography>
+```
+
+### Not Found error component
+
+```tsx
+import { SearchOff } from "@mui/icons-material";
+import { Button, Paper, Typography } from "@mui/material";
+import { Link } from "react-router-dom";
+
+const NotFound = () => {
+  return (
+    <Paper
+      sx={{
+        height: 400,
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        alignItems: "center ",
+        p: 6, //padding
+      }}
+    >
+      <SearchOff sx={{ fontSize: 100 }} color="primary" />
+      <Typography gutterBottom variant="h3">
+        Oops! we could not find what you were looking for
+      </Typography>
+      <Button fullWidth component={Link} to="/catalog">
+        Go back to shop
+      </Button>
+    </Paper>
+  );
+};
+
+export default NotFound;
+```
+
+By setting `component={Link}`, you're telling the button to behave like a React Router <Link />.
+`to="/catalog" `defines the route to navigate to.
+
+We do this for every component not present including any route. So along with NotFound component's route we will add following at bottom of paths list, to go to not found page on no available route.
+
+```tsx
+{ path: "*", element: <Navigate replace to="/not-found" /> },
+```
+
+Where Navigate is react-dom-element that redirects to given link.
+
+Also replace toast to route to NotFound element.
+
+```tsx
+if (responseData === null) router.navigate("/not-found");
+```
+
+## Setting Up Debugger in vscode
+
+launch C# debug file:
+
+```json
+{
+  // Use IntelliSense to learn about possible attributes.
+  // Hover to view descriptions of existing attributes.
+  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "C#: API Debug",
+      "type": "dotnet",
+      "request": "launch",
+      "projectPath": "${workspaceFolder}/API.csproj"
+    },
+    {
+      "name": ".NET Core Attach",
+      "type": "coreclr",
+      "request": "attach"
+    }
+  ]
+}
+```
+
+Attach C#: API Debugger to debugging session.
+Our running process is API.exe.
+
+#### What's ModelState
+
+In React (especially in UI libraries like Material UI or apps using Redux), when you hear “mode state”, it generally refers to a piece of state that tracks the current UI mode or application behavior mode.
+
+Also added server not found error. For this we added if condition outside the switch:
+
+```tsx
+if (results.error.status === "FETCH_ERROR") {
+  router.navigate("/server-not-found");
+  return results;
+}
+```
+
+# Adding the shopping cart feature
+
+## Where we store the data of cart?
+
+### Localstorage? Nope...
+
+Pros: Simplest, Persistant, Easily accessable, Works offline
+Cons: Server unaware, Limited storage, Security Risks
+
+### Database? Yep...
+
+Pros: Persistent, Secure, Scalable, Analytics (to Marketing team), Event type behavior.
+Cons: Complexity, Server Load, Online only.
+
+### Cookies? Nope...
+
+Pros: Server side access, controlled persistance (period of existance)
+Cons: Far les storage (4 kb), Performance impact (sends every update back and forward to server)
+
+## Entity Framework Relationships
+
+`Basket`---Has many--->`Items` (One to many relationship)<br>
+`BasketItem`---Has one--->`Product` (one to one relationship)
+
+## Create Basket.cs
+
+We will initially have `Id` for basket, a cookie `basketId` and a list `Items` of `BasketItems`.<br>
+For basket items we have another id, Quantity of items, and one to one relationship (navigation) with products.
+
+A cookie is a small piece of data stored in the user's browser by a website.
+
+It helps the website remember information about the user across sessions or page visits — such as login status, preferences, or tracking activity.
+
+Basket
+
+```tsx
+namespace API.Entities;
+
+public class Basket
+{
+    public int Id { get; set; }
+    public required string BasketId { get; set; } // cookie in users browser
+    // we can use this to persist items in user's basket
+    public List<BasketItem> Items { get; set; } = [];
+}
+```
+
+BasketItem
+
+```tsx
+namespace API.Entities;
+
+public class BasketItem
+{
+    public int Id { get; set; }
+    public int Quantity { get; set; }
+
+    // navigation properties
+    public int ProductId { get; set; }
+    public required Product Product { get; set; }
+
+}
+```
+
+Add and remove functionalities:
+
+```tsx
+public void AddItem(Product product, int quantity)
+    {
+        if (product == null) ArgumentNullException.ThrowIfNull(product);
+        if (quantity <= 0) throw new ArgumentException("Quantity should be greater than zero",
+             nameof(quantity));
+
+        var existingItem = FindItem(product.Id);
+        if (existingItem == null)
+        {
+            Items.Add(new BasketItem
+            {
+                Product = product,
+                Quantity = quantity,
+            });
+        }
+        else
+        {
+            existingItem.Quantity += quantity;
+        }
+    }
+
+    public void RemoveItems(int productId, int quantity) // assuming this method is used only when item exists
+    {
+        if (quantity <= 0) throw new ArgumentException("Quantity to be removed should be greater than 0", nameof(quantity));
+        var item = FindItem(productId);
+        if (item == null) return; // just stopping exec of this method
+
+        item.Quantity -= quantity;
+        if (item.Quantity <= 0)
+        {
+            Items.Remove(item);
+        }
+    }
+
+    private BasketItem? FindItem(int productId)
+    {
+        // Default is null
+        return Items.FirstOrDefault(item => item.ProductId == productId);
+    }
+```
+
+Here we are not doing anything with database. We have memory in Entity Framework and Entity Frame work tracks state of this object until we call a save changes method.
+
+## updating DbContext
+
+We already habe a products DbSet. Now lets create another DbSet in StoreContext for Basket.
+
+Now lets stop Dotnet build and add migrations: BasketEntityAdded.
+
+```bash
+dotnet ef migrations add BasketEntityAdded
+```
+
+We now got new migrations folder `BasketEntityAdded`. Then EF looks in StoreContext.cs (because it inherits dbContext) and when found new DbSet it will procced to create migration for it.
+
+Look at this in Basket Migration:
+
+```tsx
+// in migrationBuilder.CreateTable
+ name: "BasketItem",
+columns: table => new
+{
+    Id = table.Column<int>(type: "INTEGER", nullable: false)
+        .Annotation("Sqlite:Autoincrement", true),
+    Quantity = table.Column<int>(type: "INTEGER", nullable: false),
+    ProductId = table.Column<int>(type: "INTEGER", nullable: false),
+    BasketId = table.Column<int>(type: "INTEGER", nullable: true) // not good we don't want bucketId Null
+},
+constraints: table =>
+{
+  // We have relation b/w BasketItem and (product, basket) tables
+  table.PrimaryKey("PK_BasketItem", x => x.Id);
+  table.ForeignKey(
+      name: "FK_BasketItem_Baskets_BasketId",
+      column: x => x.BasketId,
+      principalTable: "Baskets",
+      principalColumn: "Id");
+  table.ForeignKey(
+      name: "FK_BasketItem_Products_ProductId",
+      column: x => x.ProductId,
+      principalTable: "Products",
+      principalColumn: "Id",
+      onDelete: ReferentialAction.Cascade);
+});
+```
+
+### Tweeks Needed
+
+First up we don't want BucketId "NULL". If it is then if there are basketItems inside it, it's just pointless.<br>
+Here we can see relation b/w BasketItem and Products we have a `Cascade` delete behavior that when product is removed. <br>
+
+- Cascade ensures tha all children are removed when parent is removed ensuring no orphaned nodes or unreachable objects that may waste space.
+- But we can't see it b/w basket and basketItem. Infact there is no delete operation for Basket item and if basket is removed, basketItems will be left as orphans.
+
+#### One way of doing this
+
+We create an override method called OnModelCreating and we can configure entities and relations in it.
+
+#### For now
+
+We gonna use conventions.
+
+The [Table("BasketItems")] attribute in C# (specifically in Entity Framework) tells the ORM (Object-Relational Mapper):
+
+👉 “Map this C# class to a database table named BasketItems.”
+
+Since BasketId is compulsory to BasketItem we will add BasketId and required Basket props to make sure next time we create migration it won't make table that will let BasketItems orphaned.
+
+But, if we make it required, we need to give basket attribute to Items we add in Basket.cs with some value. Which wont work in this case.
+So we are gonna remove required property and keep basket initialized to null in BasketItem.cs. Again this will throw error because of Nulable reference type settings. so we add ! to null `null!` to over ride it. This is solution to this case.
+
+Now we undo and redo migration.<br>
+CAUTION: we can only apply `ef migrations remove` if no changes are applied to data base.
+
+## Creating Basket Controller
+
+Should allow to create, modify, retrieve the basket.
+<br> Getting Basket.
+
+```tsx
+var basket = await context.Baskets.Include((x) => x.Items)
+  .ThenInclude((x) => x.Product)
+  .FirstOrDefaultAsync((x) => x.BasketId == Request.Cookies["basketId"]);
+```
+
+We want some things to be included, Thus we use include for eager loading to include related entities, which is provided by ef. And we use FirstOrDefault to fetch first basket that matches id of basketId from userside obtained using cookie and null otherwise.
+
+### 🍪 What is a Cookie?
+
+A cookie is a small piece of data that a server sends to the user's browser. The browser stores it and sends it back with future requests to the same server.
+
+If basket is null we will return no-content signal (204 status signal) else return basket.
+
+Other functionalities...
+
+```tsx
+using API.Data;
+using API.Entities;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+
+namespace API.Controllers;
+
+public class BasketController(StoreContext context) : BaseApiController
+{
+    [HttpGet]
+    public async Task<ActionResult<Basket>> GetBasket()
+    {
+        var basket = await context.Baskets
+            .Include(x => x.Items)
+            .ThenInclude(x => x.Product)
+            .FirstOrDefaultAsync(x => x.BasketId == Request.Cookies["basketId"]);
+
+        if (basket == null) return NoContent();
+        return basket;
+    }
+    [HttpPost] // sends request to server
+    public async Task<ActionResult> AddItemToBasket(int productId, int quantity)
+    {
+        // get basket from database
+        // else create basket
+        // get product
+        // add item to basket
+        // save changes
+
+        return StatusCode(201); // represents an "created" response.
+    }
+    [HttpDelete]
+    public async Task<ActionResult> RemoveBasketItem(int productId, int quantity)
+    {
+        // get basket
+        // remove the item or reduce its quantity
+        // save changes
+        return Ok();
+    }
+}
+```
+
+Get basket is common in both so let's create get basket function.
+
+```tsx
+private async Task<Basket?> RetrieveBasket()
+    {
+        return await context.Baskets
+            .Include(x => x.Items)
+            .ThenInclude(x => x.Product)
+            .FirstOrDefaultAsync(x => x.BasketId == Request.Cookies["basketId"]);
+    }
+```
+
+For basketId in create Basket we use Guid. A GUID (also called UUID) is a 128-bit number used to uniquely identify something — such as an object, user, session, file, etc. — across systems without duplication.
+
+```tsx
+private Basket? CreateBasket()
+{
+    var basketId = Guid.NewGuid().ToString();
+    var cookieOptions = new CookieOptions
+    {
+        IsEssential = true,
+        Expires = DateTime.UtcNow.AddDays(30)
+    };
+    Response.Cookies.Append("basketId", basketId, cookieOptions);
+    var basket = new Basket { BasketId = basketId };
+    context.Baskets.Add(basket); // giving ef basket to get it tracked
+    return basket;
+}
+```
+
+```tsx
+  [HttpPost] // sends request to server
+  public async Task<ActionResult> AddItemToBasket(int productId, int quantity)
+  {
+      // get basket from database
+      var basket = await RetrieveBasket();
+      // else create basket
+      basket ??= CreateBasket(); // compound assignment if basket is null it calls CreateBasket
+
+      // get product
+      var product = await context.Products.FindAsync(productId);
+      if (product == null) return BadRequest("Problem adding item to basket");
+      // add item to basket
+      if (basket != null)
+      {
+          basket.AddItem(product, quantity);
+      }
+      else
+      {
+          return BadRequest("Problem creating basket");
+      }
+      // save changes
+      var result = await context.SaveChangesAsync(); // includes failure checks and roll back
+      // returns no of changes
+      if (result > 0) return CreatedAtAction(nameof(GetBasket), basket);
+      // CreatedAtAction returns 201 response (indicating entity created)
+      // sends location header of basket to GetBasket function
+
+      return BadRequest("Problem updating basket");
+  }
+```
+
+`CreatedAtAction` — ASP.NET Core Function (C#):<br>
+In ASP.NET Core Web API, the CreatedAtAction method is used to return a 201 Created response along with a Location header that points to a newly created resource.
+
+- Indicates a resource was successfully created.
+- Includes a route to access the newly created resource (via Location header).
+- Typically used in POST endpoints.
+
+Using postman, request a get request for basket. Since no basket is initialized it sends 204 no content signal. API: `{{url}}/api/basket`.
+
+API request to add content to basket: `{{url}}/api/basket?productId=2&quantity=1` <br>
+We have to match variables in req with parameters of 'AddItemstoBasket' function. Then API controler automatically binds to them. It checks parameters of functions and if matches it binds.
+
+The following attribute `[APIController]` was the reason we get all these.
+
+If another action method in the same controller has the same attributr ([same this]) attribute and matches the same route, then you have a routing conflict, and the framework won't know which method to invoke.
+
+### Solution: Disambiguate with [Route] or parameter sources
+
+Option 1: Different routes
+
+```tsx
+[HttpPost("add-item")]
+public IActionResult AddItemsToBasket(int productId, int quantity) { ... }
+
+[HttpPost("add-coupon")]
+public IActionResult AddCoupon(string code) { ... }
+```
+
+Now:
+`POST /api/basket/add-item?productId=2&quantity=1`
+
+`POST /api/basket/add-coupon?code=SAVE20`
+
+Option 2: Use [FromBody] or [FromQuery] explicitly
+Still useful for clarity and to avoid conflicts.
+
+With a class we may need to do following:
+
+```tsx
+public class FilterParams
+{
+    public string Category { get; set; }
+    public int Page { get; set; }
+}
+
+[HttpGet("search")]
+public IActionResult Search([FromQuery] FilterParams filter)
+{
+    return Ok(filter);
+}
+```
+
+API request: `GET /api/products/search?category=shoes&page=2`
+
+```tsx
+[HttpGet("tags")]
+public IActionResult GetByTags([FromQuery] List<string> tags)
+{
+    return Ok(tags);
+}
+```
+
+API Request: `GET /api/products/tags?tags=summer&tags=sale`
+
+In debugger we can find cookies in this>HttpContext>Request>Cookies. Using debugger we can check every object being created.
+We can see basketId get created, cookieoptions created but for basket Id = 0, because it is set when we save changes.
+
+### This seems to work, but... aaaaaaaaaaaaaaagggggggggg
+
+We get cycic error + Internal server error (500) response.
+What is happening here is API controller is attempting to serialize the obj into json format. But because we defined basketItem like this:
+
+```tsx
+    public int BasketId { get; set; }
+    public Basket Basket { get; set; } = null!;
+```
+
+and in basket:
+
+```tsx
+public class Basket
+{
+    public int Id { get; set; }
+    public required string BasketId { get; set; } // cookie in users browser
+    // we can use this to persist items in user's basket
+    public List<BasketItem> Items { get; set; } = [];
+    ...
+}
+```
+
+What happens is when it want to serialize basket object it is gonna go to basketItem and go to Basket object and try to serialize it which again has basketItems list which has the same basketItem and again try to serialize itand over and over again resulting this:
+
+```json
+           },
+            "basketId": 1,
+            "basket": {
+                "id": 1,
+                "basketId": "b8f86222-33f8-4842-b20b-0278fe3e8d45",
+                "items": [
+                    {
+                        "id": 1,
+                        "quantity": 2,
+                        "productId": 2,
+                        "product": {...},
+                        "basketId": 1,
+                        "basket": {
+                            "id": 1,
+                            "basketId": "b8f86222-33f8-4842-b20b-0278fe3e8d45",
+                            "items": [
+                              ...
+```
+
+## Introducing DTOs
+
+So to overcome it, we use DTO (a data transfet object). Create a new folder DTOs under API folder.
+Create `BasketDTO.cs` and copy the Basket variables. And in basket items we remove those components that are causing cycles. Instead lets fill basket item with details of products in it.
+
+BasketDto
+
+```tsx
+namespace API.DTOs;
+
+public class BasketDto
+{
+    public required string BasketId { get; set; } // cookie in users browser
+    // we can use this to persist items in user's basket
+    public List<BasketItemDto> Items { get; set; } = [];
+}
+
+```
+
+BasketItemsDto
+
+```tsx
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion.Internal;
+
+namespace API.DTOs;
+
+public class BasketItemDto
+{
+    public int ProductId { get; set; }
+    public required string Name { get; set; }
+    public long Price { get; set; }
+    public required string PictureUrl { get; set; }
+    public required string Brand { get; set; }
+    public required string Type { get; set; }
+    public int Quantity { get; set; }
+}
+```
+
+Now how to make use of dto's. The problem is initiated originally in `BasketController` while creating or retrieving a basket, we are trying to return basket. So here instead return basketDto instead. We create a basket and return dto instead. Similarly to basketItems also.
+
+Simply basket Dto contains BasketId and Items list, and each basket items need to have just the info of product, rest we don't need.
+
+Now the API request works to add basket.
+
+```tsx
+    public async Task<ActionResult<BasketDto>> GetBasket()
+    {
+        var basket = await RetrieveBasket();
+
+        if (basket == null) return NoContent();
+        return new BasketDto
+        {
+            BasketId = basket.BasketId,
+            Items = basket.Items.Select(x => new BasketItemDto
+            {
+                productId = x.ProductId,
+                Name = x.Product.Name,
+                Price = x.Product.Price,
+                Brand = x.Product.Brand,
+                Type = x.Product.Type,
+                PictureUrl = x.Product.PictureUrl,
+                Quantity = x.Quantity
+            }).ToList()
+        };
+    }
+```
+
+We can simplify this using extension methods. Lets create an Extensions folder and extension for basket. Extensions are better static and can be used without initializing and we don't need to also.
+
+```tsx
+    public async Task<ActionResult<BasketDto>> GetBasket()
+    {
+        var basket = await RetrieveBasket();
+
+        if (basket == null) return NoContent();
+        return basket.ToDto();
+    }
+```
+
+All the implementation goes to Basket Extension:
+
+```tsx
+using API.DTOs;
+using API.Entities;
+
+namespace API.Extensions;
+
+public static class BasketExtension
+{
+    public static BasketDto ToDto(this Basket basket) // Basket to dto
+    {
+        return new BasketDto
+        {
+            BasketId = basket.BasketId,
+            Items = [.. basket.Items.Select(x => new BasketItemDto
+            {
+                productId = x.ProductId,
+                Name = x.Product.Name,
+                Price = x.Product.Price,
+                Brand = x.Product.Brand,
+                Type = x.Product.Type,
+                PictureUrl = x.Product.PictureUrl,
+                Quantity = x.Quantity
+            })]
+        };
+    }
+}
+```
+
+By the way, `Select` is a LINQ method used for projection.
+
+It means:<br>
+Take each element (x) from the original collection (basket.Items) and transform it into another shape — in this case, a BasketItemDto.
+
+We do this to basket in CreateAtAction method also. And now problemo solved!.
+
+## Back to client.
+
+First up create basketApi.ts and add create reducer path and end points:
+
+```tsx
+ reducerPath: "basketApi",
+  baseQuery: baseQueryWithErrorHandling,
+  tagTypes: ["Basket"],
+  endpoints: (builder) => ({
+    fetchBasket: builder.query<Basket, void>({
+      query: () => "basket",
+    }),
+    addBasketItem: builder.mutation<
+      Basket,
+      { productId: number; quantity: number }
+    >({
+      query: ({ productId, quantity }) => ({
+        url: `basket?productId=${productId}&quantity=${quantity}`,
+        method: "POST",
+      }),
+      invalidatesTags: ["Basket"],
+    }),
+    removeBasketItem: builder.mutation<
+      void,
+      { productId: number; quantity: number }
+    >({
+      query: ({ productId, quantity }) => ({
+        url: `basket?productId=${productId}&quantity=${quantity}`,
+        method: "DELETE",
+      }),
+      invalidatesTags: ["Basket"],
+    }),
+  }),
+```
+
+update reducers and middleware in store.tsx and add route to new file BasketPage. Sopping kart lies in nav bar, so next stop is navbar.
+
+Initially we kept shoppingkart button here where we should give link (as component) to basketpage.
+
+Next fetch basket query from basket page and display whether or not there are products in it.
+
+When you use a query or mutation hook, it gives you status flags automatically.
+
+```tsx
+const { data, error, isLoading, isSuccess, isError } = useFetchBasketQuery();
+```
+
+### Next: Add to kart function.
+
+Go to Product card program and find Add to kart function and add AddToKartMutation hook to it.
+
+Now this seems to work but no basket will be created. When the "Add to cart" button is clicked, the frontend triggers the addBasketItem mutation, which sends a POST request to the backend.
+
+The backend responds with a Set-Cookie header containing a new basketId, but since the request did not include credentials, the browser ignores the cookie. As a result, the basketId is not stored, and subsequent requests do not include the cookie.
+
+In a fetch or API request, credentials refers to whether the browser should include cookies, authorization headers, or TLS client certificates in the request.
+
+By default, browsers do not send or accept cookies across different domains or ports, like from:
+
+So even if the server sends a cookie using Set-Cookie, the browser won't store it unless you explicitly tell it to include credentials.
+
+Which is why we cant see cookie in response header.
+
+### ✅ Scenario: Displaying Basket Items
+
+Let’s say a user clicks "Add to Cart":
+
+- Server creates a basket (if none exists).
+- Server sends back Set-Cookie: basketId=abc123.
+- Browser stores basketId — only if credentials: 'include' is set.
+- Later, you call GET /api/basket to display the cart.
+- Browser includes Cookie: basketId=abc123 in the request.
+- Server uses that cookie to find and return the right basket items.
+
+### ❌ If Cookie is Missing
+
+The request to GET /api/basket has no way to know which basket belongs to the user.<br>
+The server might return an empty basket or null.
+
+To fix this we need to do two things:
+
+- In API program.cs in use.CORS we also allow credentials.
+
+```csharp
+app.UseCors(opt =>
+{
+    opt.AllowAnyHeader().AllowAnyMethod().AllowCredentials().WithOrigins("https://localhost:3000");
+});
+```
+
+- In baseAPI inside while fetching base query:
+
+```tsx
+const customBaseQuery = fetchBaseQuery({
+  baseUrl: "https://localhost:5001/api",
+  credentials: "include",
+});
+```
+
+Now click Add to cart and go to cookies in inspect>Application options and there we can see our cookie for basket. But this straight up wont come to us whe we click on basket, because of caching provided by redux given that we opened that page before (Prev state).
+
+## Styling Basket Page
+
+Source code in BasketPage and BasketItem
+
+Here components are not updated on screen due to caching. One method, simpler one to do this is invalidating RTK query.
+
+## Invalidating RTK Query
+
+Head over to basketAPI and since problem is with adding and removal of items, we make changes here.
+
+- Add tagTypes while calling createApi, like this: `tagTypes: ["Basket"]`
+  Think of it like saying:
+
+“Hey RTK, I want to track changes related to Basket data.”
+
+It’s just a label for a group of related cache entries.
+
+- In endpoints for fetchBasket along with query provide tag "Basket" like this:
+  ```tsx
+  fetchBasket: builder.query<Basket, void>({
+      query: () => "basket",
+      providesTags: ["Basket"],
+    }),
+  ```
+
+##### What is providesTags?
+
+Used in a query or mutation, it tells RTK:
+
+“This API endpoint provides data for this tag (e.g., Basket) — cache this!”
+
+##### What is invalidateTags?
+
+Used in mutations, it tells RTK:
+
+“Yo, something just changed. Go refetch anything related to this tag.”
+
+Parameters of onQueryStarted:
+
+```tsx
+onQueryStarted(arg, {
+  dispatch,
+  getState,
+  queryFulfilled,
+  requestId,
+  extra,
+  getCacheEntry,
+});
+```
+
+```tsx
+addBasketItem: builder.mutation<
+      Basket,
+      { productId: number; quantity: number }
+    >({
+      query: ({ productId, quantity }) => ({
+        url: `basket?productId=${productId}&quantity=${quantity}`,
+        method: "POST",
+      }),
+      onQueryStarted: async(_, {dispatch, queryFulfilled}) => {
+        try{
+          await queryFulfilled;
+          dispatch(basketAPI.util.invalidateTags(['Basket']));
+        } catch (error) {
+          console.log(error);
+        }
+      }
+    }),
+```
+
+##### What's happening?
+
+You added an item to the basket. After it's successful (await queryFulfilled), RTK says:
+
+“Let’s refetch anything tagged with 'Basket'.”
+
+`onQueryStarted`<br>
+This is a lifecycle hook used in RTK Query, specifically inside a mutation. It runs automatically when the mutation is initiated, before the actual fetch completes.
+
+At this moment:
+-onQueryStarted(...) is triggered before the actual network request
+-RTK gives it the following parameters:
+
+Parameters explained:
+
+- \_: The argument passed into the mutation — you're ignoring it here.
+- dispatch: Redux's dispatch function — lets you dispatch actions.
+- queryFulfilled: A promise that resolves when the request is done (fulfilled or rejected).
+
+##### Visual Flow
+
+- User ->> useAddBasketItemMutation: call mutation
+- RTK Query ->> onQueryStarted: runs it before fetch
+- onQueryStarted ->> queryFulfilled: waits for success
+- onQueryStarted ->> dispatch: invalidates cache
+- RTK Query ->> any query with 'Basket' tag: auto refetched
+
+Now we can successfully add item to basket.
+
+The second argument — { dispatch, queryFulfilled, ... } — is injected by RTK Query and contains tools you can use inside onQueryStarted.
+
+## Getting number on basket according to items
+
+Since we will have our updated basket cached now, lets fetch basket and count number of items present in it.
+
+In navbar.ts:
+
+Retrieve basket using useFetchBasketQuery and using reduce gather the sum of number of items present.
+
+```tsx
+const { data: basket } = useFetchBasketQuery();
+const itemCount =
+  basket?.items.reduce((sum, item) => sum + item.quantity, 0) || 0;
+```
+
+But when we click "Add to kart" now, we are getting 2 loadings to see number updated and items in cart to update. To make it spontaneous we do updation in basketAPI:
+
+We update when add to cart was clicked. If update was successfull, it stays in place otherwise it will roll back. `onQueryStarted` we update number. This is done right away when clicked. Now we need access to product and quantity.
+
+### updateQueryData
+
+In Redux Toolkit Query (RTK Query), updateQueryData is a utility method provided to directly manipulate cached data in the Redux store for a specific query.
+
+This method is part of the api.util object and is commonly used inside:
+
+- onQueryStarted lifecycle handler (to optimistically update cache)
+- Components via dispatch
+- createListenerMiddleware for reactive logic
+
+✅ updateQueryData Syntax:
+
+```tsx
+updateQueryData(endpointName, args, updateFn);
+```
+
+`endpointName`: Specifies which query endpoint's cache you want to update. <br>
+`args`: The parameters that were passed to the query when it was called. If nothing, pass `undefined`.<br>
+`updateFn`: A function that receives a mutable draft of the cached data for the given endpointName + args. You directly mutate draft, and RTK Query will create an immutable update using Immer.
+
+When you use updateQueryData, you're mutating the cached data (in Redux store) that was returned by a query endpoint — not the server data, just the client-side cached data.
+
+Immer is a JavaScript library that allows you to write code that appears to "mutate" objects, but actually produces a new, immutable copy under the hood.
+
+On using it we remove invalidate tag, and when encountered an error, we will undo it.
+
+Here we try to update quantity in cache of redux if item already exists (by retrieving it), else creating new basket item instance.
+<br> But, we created a type for basketItem on user side not a class to instantiate.
+
+So we convert basket to class with constructor. It acts as both type and instantiable class. Which is when we need entire product as parameter to create Item.
+
+```tsx
+onQueryStarted: async ({ product, quantity }, { dispatch, queryFulfilled }) => {
+  const patchResult = dispatch(
+    basketAPI.util.updateQueryData("fetchBasket", undefined, (draft) => {
+      const existingItem = draft.items.find(
+        (item) => item.productId == product.id
+      );
+      if (existingItem) existingItem.quantity += quantity;
+      // else create basketItem
+      else draft.items.push(new Item(product, quantity));
+    })
+  );
+
+  try {
+    await queryFulfilled;
+  } catch (error) {
+    console.log(error);
+    patchResult.undo();
+  }
+};
+```
+
+And make sure everywhere where this is used updated.
+
+Now new error is poping in console while adding a new Item that was not already in basket. Also if baskett was not there yet, this wont work.
+
+## Removing items from cart
+
+Similarly, using updateQueryData method get cache memory of Items and find items whose index equals ProductId (we dont need product here since we won't create one), and get itemIndex. We decrement it and in case it equals to 0 or less we use splice to remove Item at itemIndex from list of items in cache.
+
+## Incrementing count of item
+
+We can't simplay pass productId straight forward like in case of reduction. To do that we can introduce an or type like `product | Item` using type safety.
+
+#### Type gaurd
+
+```tsx
+function isBasketItem(product: Product | Item) : product is Item {
+  return(product as Item).quantity !== undefined;
+}
+
+// For addBasketItem endpoint:
+query: ({ product, quantity }) => {
+        const productId = isBasketItem(product) ? product.productId : product.id; // use this wherever needed
+        return {
+          url: `basket?productId=${productId}&quantity=${quantity}`,
+          method: "POST",
+        }
+      },
+```
+
+## Lib/util.ts... to format currencies...
+
+## shared/components/OrderSummary.tsx
+
+Provided by Neil Cummings...
+
+## Fixing other uncontrolled components
+
+Add to basket and quantit in view page...
+
+React hooks cant be inside conditional statements,
+
+```tsx
+const { id } = useParams(); // Type is string | undefined (since it comes from the URL we can't
+// guarantee that it will always be defined)
+
+const [removeBasketItem] = useRemoveBasketItemMutation();
+const [addBasketItem] = useAddBasketItemMutation();
+const { data: basket } = useFetchBasketQuery();
+const item = basket?.items.find((x) => x.productId === +id!);
+const [quantity, setQuantity] = useState(0);
+useEffect(() => {
+  if (item) setQuantity(item.quantity);
+}, [item]);
+
+const { data: product, isLoading } = useFetchProductDetailsQuery(
+  id ? parseInt(id) : 0
+);
+
+if (!product || isLoading) return <div>Loading...</div>;
+
+// here we deside no of items that are going to be present in basket
+const handleUpdateBasket = () => {
+  const updatedQuantity = item ? Math.abs(quantity - item.quantity) : quantity;
+  if (!item || quantity > item.quantity) {
+    // we need more
+    addBasketItem({ product, quantity: updatedQuantity });
+  } else {
+    // need lesser
+    removeBasketItem({ productId: product.id, quantity: updatedQuantity });
+  }
+};
+
+// canging value according to click
+const handleInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+  const value = +event.currentTarget.value; // to number
+
+  if (value >= 0) setQuantity(value); // only if greater than 0
+};
+```
+
+## Additional
+
+Added EmptyBasket component.
+
+## Checkout page
+
+Some text
+
+## Issue with non-serializable state
+
+This is because we have used class for Item which may have methods and not serializable.<br>
+It is angry with using new, creating new whole object:
+
+```tsx
+draft.items.push(isBasketItem(product) ? product : new Item(product, quantity));
+```
+
+Change to this:
+
+```tsx
+draft.items.push(
+  isBasketItem(product)
+    ? product
+    : { ...product, productId: product.id, quantity }
+);
+```
+
+We has to specify `productId: product.id` because rest all are having same names except for them is those two types (product, item).
+
+### New Bug
+
+Delete cookie and try to add items.
+
+```bash
+basketAPI.ts:41 Uncaught (in promise) TypeError: Cannot read properties of null (reading 'items')
+    at basketAPI.ts:41:40
+```
+meaning that in your basketAPI.ts file at line 41, you're trying to access .items on a variable that is currently null.
+
+We will lose our basket, so new basket will be created. But we will also get this error. So this also shows up when a brand new user adds first item to basket. Backend is fine although.
+
+This is occuring because we are trying to find some thing in draft.item but no such thing exists (null). so first we need to check weather basket exists or not using draft = null or not.
+
+updates:
+``` tsx
+let isNewBasket = false;
+if (!draft?.basketId) isNewBasket = true;
+
+if (!isNewBasket){
+  // push items logic here
+}
+```
+
+Now this simply resolves this and we push dispatch function into try block after await of onQueryFullfilled.
+
+This might take very first add to cart, some time to update ui.
+
+Done with basket.
+
