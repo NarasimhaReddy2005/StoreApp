@@ -7,6 +7,7 @@ import { catalogAPI } from "../../features/catalog/catalogAPI";
 import { uiSlice } from "../layout/uiSlice";
 import { errorApi } from "../../features/about/errorApi";
 import { basketAPI } from "../../features/Basket/basketAPI";
+import { catalogSlice } from "../../features/catalog/catalogSlice";
 
 export function configureTheStore() {
   return legacy_createStore(counterReducer);
@@ -19,9 +20,14 @@ export const store = configureStore({
     [basketAPI.reducerPath]: basketAPI.reducer,
     counter: counterSlice.reducer,
     ui: uiSlice.reducer,
+    catalog: catalogSlice.reducer,
   },
   middleware: (getDefaultMiddleware) =>
-    getDefaultMiddleware().concat(catalogAPI.middleware, errorApi.middleware, basketAPI.middleware),
+    getDefaultMiddleware().concat(
+      catalogAPI.middleware,
+      errorApi.middleware,
+      basketAPI.middleware
+    ),
 });
 
 // Infer the `RootState`,  `AppDispatch`, and `AppStore` types from the store itself
