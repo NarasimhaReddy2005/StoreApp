@@ -55,8 +55,7 @@ const Filters = ({ filtersData: data }: Props) => {
           window.scrollTo({ top: 0, behavior: "smooth" });
         }}
       >
-        {" "}
-        Reset Filters{" "}
+        Reset Filters
       </Button>
     </Box>
   );
