@@ -1,6 +1,7 @@
 using API.Data;
 using API.Entities;
 using API.Middleware;
+using API.Services;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
@@ -25,6 +26,8 @@ builder.Services.AddIdentityApiEndpoints<User>(
         // some rules for passwords are default by .Net. So we need not specify them
     }
 ).AddRoles<IdentityRole>().AddEntityFrameworkStores<StoreContext>();
+builder.Services.AddScoped<PaymentsService>();
+builder.Services.AddHttpClient<CurrencyService>();
 
 var app = builder.Build();
 

@@ -7,6 +7,8 @@ public class Basket
     // we can use this to persist items in user's basket
     public List<BasketItem> Items { get; set; } = [];
 
+    public string? ClientSecret { get; set; } 
+
     public void AddItem(Product product, int quantity)
     {
         if (product == null) ArgumentNullException.ThrowIfNull(product);

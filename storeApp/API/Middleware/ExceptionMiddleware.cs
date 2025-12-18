@@ -26,6 +26,19 @@ public class ExceptionMiddleware(IHostEnvironment env, ILogger<ExceptionMiddlewa
     private async Task HandleException(HttpContext context, Exception ex)
     {
         logger.LogError(ex, ex.Message);
+
+        // Log inner exceptions explicitly
+        if (ex.InnerException != null)
+        {
+            logger.LogError("INNER EXCEPTION: {Message}", ex.InnerException.Message);
+        }
+
+        if (ex.InnerException?.InnerException != null)
+        {
+            logger.LogError("INNER INNER EXCEPTION: {Message}",
+                ex.InnerException.InnerException.Message);
+        }
+
         context.Response.ContentType = "application/json"; // converting to JSON
         context.Response.StatusCode = (int)HttpStatusCode.InternalServerError; // Getting status code
 
