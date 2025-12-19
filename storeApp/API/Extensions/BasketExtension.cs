@@ -1,5 +1,6 @@
 using API.DTOs;
 using API.Entities;
+using Microsoft.EntityFrameworkCore;
 
 namespace API.Extensions;
 
@@ -21,5 +22,12 @@ public static class BasketExtension
                 Quantity = x.Quantity
             })]
         };
+    }
+    public static async Task<Basket> GetBasketWithItems(this IQueryable<Basket> query, string? basketId)
+    {
+        return await query
+            .Include(i => i.Items)
+            .ThenInclude(p => p.Product)
+            .FirstOrDefaultAsync(x => x.BasketId == basketId) ?? throw new Exception("Cannot get basket");
     }
 }

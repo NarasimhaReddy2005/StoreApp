@@ -21,6 +21,7 @@ public class StoreContext(DbContextOptions options) : IdentityDbContext<User>(op
     public required DbSet<Order> Orders { get; set; }
     public required DbSet<Payment> Payments { get; set; }
     public required DbSet<Address> Addresses { get; set; }
+    public required DbSet<Entities.OrderAggregate.Order> Orders2 { get; set; }
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
