@@ -13,7 +13,7 @@ export const paymentsApi = createApi({
       { basketId: string; address: Address }
     >({
       query: (body) => ({
-        url: "payments/create-order",
+        url: "payments/create-rzp-order",
         method: "POST",
         body,
       }),

@@ -135,6 +135,9 @@ public class PaymentsService(IConfiguration config, StoreContext context)
         var razorpayPaymentId = payment.GetProperty("id").GetString();
         var amount = payment.GetProperty("amount").GetInt64();
 
+        if (string.IsNullOrEmpty(razorpayOrderId) || string.IsNullOrEmpty(razorpayPaymentId))
+            return;
+
         // Idempotency check
         var existingPayment = await _context.Payments
             .FirstOrDefaultAsync(p => p.PaymentId == razorpayPaymentId);

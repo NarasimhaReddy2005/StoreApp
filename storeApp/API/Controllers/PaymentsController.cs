@@ -17,8 +17,8 @@ namespace API.Controllers
         }
 
         // 1️⃣ Create Razorpay Order
-        [HttpPost("create-order")]
-        public async Task<IActionResult> CreateOrder(CreateOrderDto dto)
+        [HttpPost("create-rzp-order")]
+        public async Task<IActionResult> CreateRazorpayOrder(CreateRazorpayOrderDto dto)
         {
             if (string.IsNullOrEmpty(dto.BasketId))
                 return BadRequest("BasketId is required");

@@ -11,10 +11,10 @@ public class Order
     public List<OrderItem> OrderItems { get; set; } = [];
     public long Subtotal { get; set; }
     public long DeliveryFee { get; set; }
-
     public long Discount { get; set; }
     public OrderStatus OrderStatus {get; set;} = OrderStatus.Pending;
     public required PaymentSummary PaymentSummary { get; set; }
+    public required string RazorpayOrderId { get; set; }
     public long GetTotal()
     {
         return Subtotal + DeliveryFee - Discount;

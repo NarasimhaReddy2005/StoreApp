@@ -17,21 +17,22 @@ public class OrdersController(StoreContext context, IConfiguration config) : Bas
     private readonly string _webhookSecret = config["RazorpaySettings:WebhookSecret"]!;
 
     [HttpGet]
-    public async Task<ActionResult<List<Entities.OrderAggregate.Order>>> GetOrders()
+    public async Task<ActionResult<List<OrderDto>>> GetOrders()
     {
         var email = User.Identity?.Name;
         var orders = await context.Orders2
-            .Include(o => o.OrderItems)
+            .ProjectToDto()
             .Where(o => o.BuyerEmail == User.GetUsername())
             .ToListAsync();
 
-        return Ok(orders);
+        return orders;
     }
 
     [HttpGet("{id:int}")]
-    public async Task<ActionResult<Entities.OrderAggregate.Order>> GetOrderDetails(int id)
+    public async Task<ActionResult<OrderDto>> GetOrderDetails(int id)
     {
         var order = await context.Orders2
+            .ProjectToDto()
             .Where(o => o.BuyerEmail == User.GetUsername() && o.Id == id)
             .FirstOrDefaultAsync();
 
@@ -40,15 +41,15 @@ public class OrdersController(StoreContext context, IConfiguration config) : Bas
         return order;
     }
     [HttpPost]
-    public async Task<ActionResult<int>> CreateOrder(OrderDto orderDto)
+    public async Task<ActionResult<int>> CreateOrder(CreateOrderDto orderDto)
     {
         var basket = await context.Baskets.GetBasketWithItems(Request.Cookies["basketId"]);
 
-        if (basket == null || basket.Items.Count == 0) 
+        if (basket == null || basket.Items.Count == 0)
             return BadRequest("Basket is empty or not found");
-        
-        var items = CreateOrderItems(basket.Items);
-        var subtotal = items.Sum(item => item.price * item.Quantity);
+
+        var items = await CreateOrderItemsAsync(basket.Items);
+        var subtotal = items.Sum(item => item.Price * item.Quantity);
         var deliveryFee = CalculatreDeliveryFee(subtotal);
         var order = new Entities.OrderAggregate.Order
         {
@@ -56,26 +57,47 @@ public class OrdersController(StoreContext context, IConfiguration config) : Bas
             OrderItems = items,
             ShippingAddress = orderDto.ShippingAddress, // Placeholder
             Subtotal = subtotal,
-            DeliveryFee = (long)deliveryFee,
-            PaymentSummary = orderDto.PaymentSummary // Placeholder
+            DeliveryFee = deliveryFee,
+            PaymentSummary = orderDto.PaymentSummary, // Placeholder
+            RazorpayOrderId = orderDto.RazorpayOrderId
         };
 
         context.Orders2.Add(order);
         context.Baskets.Remove(basket);
         Response.Cookies.Delete("basketId");
         var result = await context.SaveChangesAsync() > 0;
-    
-        if(!result) return BadRequest("Problem creating order");
-        return CreatedAtAction(nameof(GetOrderDetails), new { id = order.Id }); // Placeholder return
+
+        if (!result) return BadRequest("Problem creating order");
+        return CreatedAtAction(nameof(GetOrderDetails), new { id = order.Id }, order.ToDto()); // Placeholder return
     }
 
-    private object CalculatreDeliveryFee(long subtotal)
+    private static long CalculatreDeliveryFee(long subtotal)
     {
-        throw new NotImplementedException();
+        return subtotal > 10000 ? 0 : 500;
     }
 
-    private List<OrderItem> CreateOrderItems(List<BasketItem> items)
+    private async Task<List<OrderItem>> CreateOrderItemsAsync(List<BasketItem> items)
     {
-        throw new NotImplementedException();
+        var orderItems = new List<OrderItem>();
+        foreach (var item in items)
+        {
+            var product = await context.Products.FindAsync(item.ProductId) ?? throw new InvalidOperationException($"Product with ID {item.ProductId} not found");
+            var itemOrdered = new ProductItemOrder
+            {
+                ProductId = product.Id,
+                Name = product.Name,
+                PictureUrl = product.PictureUrl
+            };
+
+            var orderItem = new OrderItem
+            {
+                ItemOrdered = itemOrdered,
+                Price = product.Price,
+                Quantity = item.Quantity
+            };
+
+            orderItems.Add(orderItem);
+        }
+        return orderItems;
     }
 }

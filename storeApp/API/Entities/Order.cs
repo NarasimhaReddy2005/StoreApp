@@ -3,7 +3,7 @@ namespace API.Entities;
 public class Order
 {
     public int Id { get; set; }
-    public string? OrderId { get; set; }
+    public string? OrderId { get; set; } // Razorpay order id
     public string? PaymentId { get; set; }
     public long Amount { get; set; }
     public string Status { get; set; } = "created";

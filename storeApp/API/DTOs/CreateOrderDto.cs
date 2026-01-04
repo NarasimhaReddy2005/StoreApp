@@ -1,11 +1,11 @@
-using API.Entities;
+using System;
+using API.Entities.OrderAggregate;
 
 namespace API.DTOs;
 
 public class CreateOrderDto
 {
-    public string BasketId { get; set; } = null!;
-    // public long Amount { get; set; }
-    // will be calculated in the service for security regions
-    public Address Address { get; set; } = null!;
+    public required string RazorpayOrderId { get; set; }
+    public required ShippingAddress ShippingAddress { get; set; }
+    public required PaymentSummary PaymentSummary { get; set; }
 }
