@@ -2,6 +2,7 @@ import { createApi } from "@reduxjs/toolkit/query/react";
 import { baseQueryWithErrorHandling } from "../../app/api/baseAPI";
 import { Item, type Basket } from "../../app/Models/basket";
 import type { Product } from "../../app/Models/product";
+import Cookies from "js-cookie";
 
 function isBasketItem(product: Product | Item): product is Item {
   return (product as Item).quantity !== undefined;
@@ -28,7 +29,7 @@ export const basketAPI = createApi({
           url: `basket?productId=${productId}&quantity=${quantity}`,
           method: "POST",
         };
-      },
+      },  
       onQueryStarted: async (
         { product, quantity },
         { dispatch, queryFulfilled }
@@ -101,6 +102,18 @@ export const basketAPI = createApi({
         }
       },
     }),
+    clearBasket: builder.mutation<void, void>({
+      queryFn: () => ({data: undefined}),
+      onQueryStarted: async (_, {dispatch}) => {
+        dispatch(
+          basketAPI.util.updateQueryData("fetchBasket", undefined, (draft) => {
+            draft.items = [];
+            draft.basketId = '';
+          })
+        );
+        Cookies.remove('basketId');
+      }
+    }),
   }),
 });
 
@@ -108,4 +121,5 @@ export const {
   useFetchBasketQuery,
   useAddBasketItemMutation,
   useRemoveBasketItemMutation,
+  useClearBasketMutation,
 } = basketAPI;

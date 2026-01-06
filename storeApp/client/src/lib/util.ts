@@ -1,3 +1,5 @@
+import type { PaymentSummary, ShippingAddress } from "../app/Models/order";
+
 export function currencyFormat(amount: number) {
     return '$' + (amount / 100).toFixed(2);
 }
@@ -8,4 +10,12 @@ export function filterEmptyValues(values: object) {
             ([, value]) => value !== '' && value !== null && value !== undefined && value.length !== 0
         )
     );
+}
+export function getAddressString(address: ShippingAddress){
+    return `${address.name} ${address.line1}, ${address.city}, ${address.state}, ${address.postal_code}, ${address.country}`;
+}
+export function getPaymentString(paymentSummary: PaymentSummary) {
+  if (!paymentSummary) return "Pending";
+  // demo-safe display
+  return `Razorpay - ID ${paymentSummary.rzpPaymentId}`;
 }

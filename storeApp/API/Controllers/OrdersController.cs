@@ -8,6 +8,8 @@ using API.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Org.BouncyCastle.Crypto.Parameters;
+using Razorpay.Api;
 
 namespace API.Controllers;
 
@@ -15,7 +17,10 @@ namespace API.Controllers;
 public class OrdersController(StoreContext context, IConfiguration config) : BaseApiController
 {
     private readonly string _webhookSecret = config["RazorpaySettings:WebhookSecret"]!;
-
+    private readonly string _keyId = config["RazorpaySettings:KeyId"]
+            ?? throw new InvalidOperationException("Razorpay KeyId is not configured.");
+    private readonly string _keySecret = config["RazorpaySettings:SecretKey"]
+            ?? throw new InvalidOperationException("Razorpay KeySecret is not configured.");
     [HttpGet]
     public async Task<ActionResult<List<OrderDto>>> GetOrders()
     {
@@ -48,6 +53,11 @@ public class OrdersController(StoreContext context, IConfiguration config) : Bas
         if (basket == null || basket.Items.Count == 0)
             return BadRequest("Basket is empty or not found");
 
+
+        var payconf = await ConfirmRazorpayPaymentAsync(orderDto.PaymentSummary);
+        if (!payconf) return BadRequest("PAYMENT NOT RECEIVED OR ERROR AT PAYMENTS");
+
+
         var items = await CreateOrderItemsAsync(basket.Items);
         var subtotal = items.Sum(item => item.Price * item.Quantity);
         var deliveryFee = CalculatreDeliveryFee(subtotal);
@@ -59,7 +69,8 @@ public class OrdersController(StoreContext context, IConfiguration config) : Bas
             Subtotal = subtotal,
             DeliveryFee = deliveryFee,
             PaymentSummary = orderDto.PaymentSummary, // Placeholder
-            RazorpayOrderId = orderDto.RazorpayOrderId
+            RazorpayOrderId = orderDto.RazorpayOrderId,
+            OrderStatus = OrderStatus.PaymentReceived
         };
 
         context.Orders2.Add(order);
@@ -99,5 +110,55 @@ public class OrdersController(StoreContext context, IConfiguration config) : Bas
             orderItems.Add(orderItem);
         }
         return orderItems;
+    }
+    public async Task<bool> ConfirmRazorpayPaymentAsync(PaymentSummary paymentSummary)
+    {
+        var razorpayOrderId = paymentSummary.RzpOrderId;
+        var razorpayPaymentId = paymentSummary.RzpPaymentId;
+        var razorpaySignature = paymentSummary.RzpSignature;
+        try
+        {
+            // 1Verify Razorpay signature (authenticity)
+            var attributes = new Dictionary<string, string>
+        {
+            { "razorpay_order_id", razorpayOrderId },
+            { "razorpay_payment_id", razorpayPaymentId },
+            { "razorpay_signature", razorpaySignature }
+        };
+
+            Utils.verifyPaymentSignature(attributes);
+            var _razorpayClient = new RazorpayClient(_keyId, _keySecret);
+
+            //  Fetch payment from Razorpay (authority check)
+            var payment = _razorpayClient.Payment.Fetch(razorpayPaymentId);
+
+            // 3Ensure payment belongs to this order
+            if (payment["order_id"]?.ToString() != razorpayOrderId)
+                return false;
+
+            // Ensure money was actually captured
+            if (payment["status"]?.ToString() != "captured")
+                return false;
+
+            //  Load your store order
+            var order = await context.Orders
+                .FirstOrDefaultAsync(o => o.OrderId == razorpayOrderId);
+
+            if (order == null)
+                return false;
+
+            // 6️Verify amount (paise)
+            if ((int)payment["amount"] != order.Amount)
+                return false;
+
+            // 7 Idempotency check (already paid)
+            if (order.Status == "paid")
+                return true;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 }

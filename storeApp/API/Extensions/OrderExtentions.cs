@@ -45,14 +45,14 @@ public static class OrderExtentions
             OrderStatus = order.OrderStatus.ToString(),
             PaymentSummary = order.PaymentSummary,
             Total = order.GetTotal(),
-            OrderItems = order.OrderItems.Select(item => new OrderItemDto
+            OrderItems = [.. order.OrderItems.Select(item => new OrderItemDto
             {
                 ProductId = item.ItemOrdered.ProductId,
                 Name = item.ItemOrdered.Name,
                 PictureUrl = item.ItemOrdered.PictureUrl,
                 Price = item.Price,
                 Quantity = item.Quantity
-            }).ToList()
+            })]
         };
     }
 }

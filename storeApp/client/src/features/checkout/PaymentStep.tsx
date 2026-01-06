@@ -1,13 +1,15 @@
 import { Box, Button, Typography } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import {
-  useCreateOrderMutation,
+  useCreateOrderMutation as useCreateRazorpayOrderMutation,
   useVerifyPaymentMutation,
 } from "./paymentsApi";
 import { basketAPI, useFetchBasketQuery } from "../Basket/basketAPI";
 import type { FetchBaseQueryError } from "@reduxjs/toolkit/query";
 import { useAppDispatch, useAppSelector } from "../../app/store/store";
-
+import {
+  useCreateOrderMutation as useCreateStoreOrderMutation,
+} from "../orders/orderApi";
 declare global {
   interface Window {
     Razorpay: new (options: RazorpayOptions) => RazorpayInstance;
@@ -49,8 +51,10 @@ export default function PaymentStep({ onBack }: Props) {
   );
 
   const { data: basket, isLoading } = useFetchBasketQuery();
-  const [createOrder, { isLoading: creatingOrder }] = useCreateOrderMutation();
+  const [createOrder, { isLoading: creatingOrder }] = useCreateRazorpayOrderMutation();
+  const [createOrder2] = useCreateStoreOrderMutation();
   const [verifyPayment] = useVerifyPaymentMutation();
+  const [clearBasket] = basketAPI.useClearBasketMutation();
 
   if (isLoading || !basket) {
     return <Typography>Loading payment details...</Typography>;
@@ -59,6 +63,8 @@ export default function PaymentStep({ onBack }: Props) {
     navigate("/checkout/address");
     return;
   }
+
+
 
   const handlePayment = async () => {
     if (!shippingAddress) {
@@ -91,7 +97,25 @@ export default function PaymentStep({ onBack }: Props) {
           // Invalidate basket to force refetch
           dispatch(basketAPI.util.invalidateTags(["Basket"]));
 
-          navigate("/checkout/success");
+          // create order
+          const createOrderModel = async () => {
+            const shippingAddress1 = shippingAddress;
+            const paymentSummary = {
+              rzpPaymentId: response.razorpay_payment_id,
+              rzpOrderId: response.razorpay_order_id,
+              rzpSignature: response.razorpay_signature,
+            };
+            const razorpayOrderId = response.razorpay_order_id;
+            if (!shippingAddress1 || !paymentSummary || !razorpayOrderId)
+              throw new Error("Missing data for order creation");
+            return { shippingAddress, paymentSummary, razorpayOrderId };
+          };
+
+          const orderModel = await createOrderModel();
+          const createdOrder = await createOrder2(orderModel).unwrap();
+          clearBasket();
+
+          navigate("/checkout/success", {state: createdOrder});
         },
         modal: {
           ondismiss: () => {
