@@ -8,7 +8,7 @@ namespace API.Data;
 
 public class DbInitializer
 {
-    public static void InitDb(WebApplication app)
+    public static async Task InitDb(WebApplication app)
     {
         using var scope = app.Services.CreateScope();
         // "using" statement ensures that the scope is disposed of after use,
@@ -16,7 +16,7 @@ public class DbInitializer
                 ?? throw new InvalidOperationException("Failed to retrieve StoreContext service.");
         var userManager = scope.ServiceProvider.GetRequiredService<UserManager<User>>()
                 ?? throw new InvalidOperationException("Failed to retrieve user Manager");
-        _ = SeedData(context, userManager); // discarding
+        await SeedData(context, userManager); // discarding
     }
 
     private static async Task SeedData(StoreContext context, UserManager<User> userManager)

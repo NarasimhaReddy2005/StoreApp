@@ -12,7 +12,7 @@ builder.Services.AddControllers();
 // since db context is used in many parts of our application, we are adding it as a service here
 builder.Services.AddDbContext<StoreContext>(opt =>
 {
-    opt.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection"));
+    opt.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"));
 });
 // A connection string is a specially formatted string of 
 // text that specifies how an application should connect to a database.
@@ -32,6 +32,11 @@ builder.Services.AddHttpClient<CurrencyService>();
 var app = builder.Build();
 
 app.UseMiddleware<ExceptionMiddleware>(); // must be right after building app so any exception will be caught
+
+app.UseDefaultFiles();
+
+app.UseStaticFiles();
+
 app.UseCors(opt =>
 {
     opt.AllowAnyHeader().AllowAnyMethod().AllowCredentials().WithOrigins("https://localhost:3000");
@@ -42,7 +47,8 @@ app.UseAuthorization();
 // Configure the HTTP request pipeline.
 app.MapControllers();
 app.MapGroup("api").MapIdentityApi<User>();
+app.MapFallbackToController("Index", "Fallback");
 
-DbInitializer.InitDb(app);
+await DbInitializer.InitDb(app);
 
 app.Run();

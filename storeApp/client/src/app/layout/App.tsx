@@ -6,37 +6,43 @@ import {
   ThemeProvider,
 } from "@mui/material";
 import { Navbar } from "./Navbar";
-import { Outlet, ScrollRestoration } from "react-router-dom";
+import { Outlet, ScrollRestoration, useLocation } from "react-router-dom";
 import { useAppSelector } from "../store/store";
 
 function App() {
   const { darkMode } = useAppSelector((state) => state.ui);
-  const paletteType = darkMode ? "dark" : "light";
+  const location = useLocation();
+
+  const isHome = location.pathname === "/";
+
   const theme = createTheme({
     palette: {
-      mode: paletteType,
+      mode: darkMode ? "dark" : "light",
       background: {
-        default: paletteType === "light" ? "#ffffff" : "#121212",
+        default: darkMode ? "#121212" : "#ffffff",
       },
     },
   });
 
-  // When dependencies change useEffect will try to sync with external state of API
-  // mt => margin-top
   return (
     <ThemeProvider theme={theme}>
+      <CssBaseline />
       <ScrollRestoration />
-      <CssBaseline /> {/* Removes default browser borders */}
       <Navbar />
+
       <Box
         sx={{
           minHeight: "100vh",
           background: darkMode ? "#121212" : "#ffffff",
         }}
       >
-        <Container maxWidth="xl" sx={{ mt: 12 }}>
+        {isHome ? (
           <Outlet />
-        </Container>
+        ) : ( 
+          <Container maxWidth="xl" sx={{ mt: 10 }}>
+            <Outlet />
+          </Container>
+        )}
       </Box>
     </ThemeProvider>
   );

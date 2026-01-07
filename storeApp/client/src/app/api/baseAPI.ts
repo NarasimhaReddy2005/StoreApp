@@ -8,8 +8,8 @@ import { toast } from "react-toastify";
 import { router } from "../routes/Routes";
 
 const customBaseQuery = fetchBaseQuery({
-  baseUrl: "https://localhost:5001/api",
-  credentials: "include"
+  baseUrl: import.meta.env.VITE_API_URL,
+  credentials: "include",
 });
 
 type ErrorResponse = string | { title: string } | { errors: string[] };
@@ -23,7 +23,7 @@ export const baseQueryWithErrorHandling = async (
 ) => {
   api.dispatch(startLoading()); // start loading
 
-  await sleep();
+  if(import.meta.env.DEV) await sleep();
 
   const results = await customBaseQuery(args, api, extraOptions);
 

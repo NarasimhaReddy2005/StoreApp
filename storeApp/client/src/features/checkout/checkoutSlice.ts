@@ -1,5 +1,5 @@
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
-import type { ShippingAddress } from "../../features/checkout/ShippingAddressForm";
+import type { ShippingAddress } from "../../app/Models/order";
 
 interface CheckoutState {
   shippingAddress: ShippingAddress | null;
