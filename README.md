@@ -3005,6 +3005,7 @@ Delete cookie and try to add items.
 basketAPI.ts:41 Uncaught (in promise) TypeError: Cannot read properties of null (reading 'items')
     at basketAPI.ts:41:40
 ```
+
 meaning that in your basketAPI.ts file at line 41, you're trying to access .items on a variable that is currently null.
 
 We will lose our basket, so new basket will be created. But we will also get this error. So this also shows up when a brand new user adds first item to basket. Backend is fine although.
@@ -3012,11 +3013,12 @@ We will lose our basket, so new basket will be created. But we will also get thi
 This is occuring because we are trying to find some thing in draft.item but no such thing exists (null). so first we need to check weather basket exists or not using draft = null or not.
 
 updates:
-``` tsx
+
+```tsx
 let isNewBasket = false;
 if (!draft?.basketId) isNewBasket = true;
 
-if (!isNewBasket){
+if (!isNewBasket) {
   // push items logic here
 }
 ```
@@ -3027,3 +3029,2536 @@ This might take very first add to cart, some time to update ui.
 
 Done with basket.
 
+# Paging, sorting, filtering and searching.
+
+Linqueries.  
+We can use them to fetch paginated, sorted, filtered, and searched data from the server.
+
+Deffered execution: LINQ queries are not executed until you iterate over them or call a method that forces execution (like ToListAsync(), FirstOrDefault(), etc.). This allows you to build complex queries without hitting the database until you're ready.
+
+We build an expression tree that represents the query, and then we can execute it later.
+
+## What is Pagination?
+
+Pagination is the process of dividing a large dataset into smaller, manageable chunks or pages. This is useful for displaying data in a user-friendly way, especially when dealing with large datasets.
+
+## Starting with API
+
+Product controller:
+To `GetProducts()` in products controller we use a query variable to store query to use it whenever we are ready.
+
+### First lets add sorting
+
+```csharp
+public async Task<ActionResult<List<Product>>> GetProducts(string orderBy)
+{
+    var query = context.Products.AsQueryable();
+
+    query = orderBy switch
+    {
+        "price" => query.OrderBy(x => x.Price),
+        "priceDesc" => query.OrderByDescending(x => x.Price),
+        _ => query.OrderBy(x => x.Name) // default
+    };
+    return await query.ToListAsync();
+}
+```
+
+` url: /api/products?orderBy=priceDesc`
+
+Ways to seperate logic API:
+
+- Repository Method
+- Extension Method
+
+We use extension method
+
+## Searching
+
+public static IQueryable<Product> Sort(this IQueryable<Product> query, string? orderBy)
+It tells the compiler:
+
+“This is an extension method.”
+
+“It can be called as if it’s a method of the type you’re extending (IQueryable<Product> here).”
+
+So now you can call it like:
+
+```csharp
+var query = context.Products.Sort("price");
+```
+
+`IQueryable<T>`
+
+`IQueryable<T>` means:
+"A queryable collection of objects of type `T`."
+
+But action will be done in database itself, not in memory like `IEnumerable<T>`.
+
+## Filtering
+
+Taking brands and types as single string (comma seperated values).
+
+```csharp
+query = query.Where(x => brandList.Count == 0 || brandList.Contains(x.Brand.ToLower()));
+query = query.Where(x => typeList.Count == 0 || typeList.Contains(x.Type.ToLower()));
+```
+
+`.Contains` checks the value given is present in list or not.
+
+ASP.NET Core’s model binding is case-insensitive by default for query string keys.
+
+That means all of these work the same:
+
+GET /api/products?pageNumber=2&pageSize=5
+GET /api/products?PageNumber=2&PageSize=5
+GET /api/products?pagenumber=2&pagesize=5
+
+```csharp
+public async Task<ActionResult<List<Product>>> GetProducts([FromQuery] ProductParams productParams)
+{
+    var query = context.Products.AsQueryable();
+
+    query = query.Filter(productParams.SearchTerm);
+    query = query.Sort(productParams.OrderBy);
+    query = query.Paginate(productParams.PageNumber, productParams.PageSize);
+
+    return await query.ToListAsync();
+}
+```
+
+```csharp
+using System;
+
+namespace API.RequestHelpers;
+public class ProductParams
+{
+    public string? OrderBy { get; set; }
+    public string? SearchTerm { get; set; }
+    public string? Brands { get; set; }
+    public string? Types { get; set; }
+}
+```
+
+Simple types (primitives) → automatically bound from query string, route, or form → [FromQuery] optional.
+
+Complex types (your classes like ProductParams) → default is [FromBody], so you must specify [FromQuery] if it comes from query string.
+
+## Pagination
+
+```csharp
+using System;
+
+namespace API.RequestHelpers;
+
+public class PaginationParams
+{
+    private const int MaxPageSize = 50; // no fo products to be displayed
+    public int PageNumber { get; set; } = 1;
+    private int _pageSize;
+    public int PageSize
+    {
+        get => _pageSize;
+        set => _pageSize = value > MaxPageSize ? MaxPageSize : value;
+    }
+}
+```
+
+To make it applicable for filters:
+
+```csharp
+using System;
+
+namespace API.RequestHelpers;
+public class ProductParams : PaginationParams
+{
+    public string? OrderBy { get; set; }
+    public string? SearchTerm { get; set; }
+    public string? Brands { get; set; }
+    public string? Types { get; set; }
+}
+```
+
+Now creating pagination metadata object so that on client side we can make use of this data to format and display.
+
+```csharp
+public class PaginationMetadata
+{
+    public int TotalCount { get; set; }
+    public int PageSize { get; set; }
+    public int CurrentPage { get; set; }
+    public int TotalPages { get; set; }
+}
+```
+
+Next we create paged List tat soores products per page. Consists of Metadata + list of items corresponding to that page.
+
+```csharp
+using System;
+using Microsoft.EntityFrameworkCore;
+
+namespace API.RequestHelpers;
+
+public class PagedList<T> : List<T> //Product
+{
+    public PaginationMetaData MetaData { get; set; }
+    public PagedList(List<T> items, int count, int PageNumber, int pageSize)
+    {
+        MetaData = new PaginationMetaData
+        {
+            TotalCount = count,
+            PageSize = pageSize,
+            CurrentPage = PageNumber,
+            TotalPages = (int)Math.Ceiling(count / (double)pageSize)
+        };
+        AddRange(items);
+    }
+    public static async Task<PagedList<T>> ToPagedList(IQueryable<T> query, int pageNumber, int pageSize)
+    {
+        var count = await query.CountAsync(); // returns count of products
+        var items = await query.Skip((pageNumber - 1) * pageSize).Take(pageSize).ToListAsync();
+
+        return new PagedList<T>(items, count, pageNumber, pageSize);
+    }
+}
+```
+
+Using it in `GetProducts` method:
+
+```csharp
+public async Task<ActionResult<List<Product>>> GetProducts([FromQuery] ProductParams productParams)
+{
+    var query = context.Products
+                        .Sort(productParams.OrderBy)
+                        .Search(productParams.SearchTerm)
+                        .Filter(productParams.Brands, productParams.Types)
+                        .AsQueryable(); // sort is an extension we made
+
+    var products = await PagedList<Product>.ToPagedList(query, productParams.PageNumber, productParams.PageSize);
+
+    return Ok(new {Items = products, products.MetaData});
+}
+```
+
+```csharp
+public static class HttpExtensions
+{
+    public static void AddPaginationHeader(this HttpResponse response, PaginationMetaData metadata)
+    {
+        var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
+        response.Headers.Append("Pagination", JsonSerializer.Serialize(metadata, options));
+        response.Headers.Append(HeaderNames.AccessControlExposeHeaders, "Pagination");
+    }
+}
+```
+
+`JsonSerializerOptions`
+
+Configures serialization. Here it forces JSON camelCase naming (totalPages instead of TotalPages).
+
+`response.Headers.Append("Pagination", ...)`
+
+Adds a custom HTTP header named Pagination to the response.
+
+The value is the serialized metadata object (in JSON).
+
+`response.Headers.Append(HeaderNames.AccessControlExposeHeaders, "Pagination");`
+
+By default, browsers block custom headers unless explicitly exposed.
+
+This line makes sure the Pagination header is visible to the browser’s JavaScript (CORS stuff).
+
+## Filters
+
+### Lets make a way to access what and all brands and types available for filtering
+
+`[HttpGet("filters")]` -> such that we reach this end point on adding "filters" to end point.
+
+## Front end part
+
+Slice for catalog filters
+
+```csharp
+// catalogSlice.ts
+
+import { createSlice } from "@reduxjs/toolkit";
+import type { ProductParams } from "../../app/Models/productParams";
+
+const initialState: ProductParams = {
+  pageNumber: 1,
+  pageSize: 8,
+  types: [],
+  brands: [],
+  searchTerm: "",
+  orderBy: "name",
+};
+
+export const catalogSlice = createSlice({
+  name: "catalogSlice",
+  initialState,
+  reducers: {
+    setPageNumber(state, action) {
+      state.pageNumber = action.payload;
+    },
+    setPageSize(state, action) {
+      state.pageSize = action.payload;
+    },
+    setOrderBy(state, action) {
+      state.orderBy = action.payload;
+      state.pageNumber = 1;
+    },
+    setTypes(state, action) {
+      state.types = action.payload;
+      state.pageNumber = 1;
+    },
+    setBrands(state, action) {
+      state.brands = action.payload;
+      state.pageNumber = 1;
+    },
+    setSearchTerm(state, action) {
+      state.searchTerm = action.payload;
+      state.pageNumber = 1;
+    },
+    resetParams() {
+      return initialState;
+    },
+  },
+});
+
+export const {setBrands, setOrderBy, setPageNumber, setPageSize, setSearchTerm, setTypes} = catalogSlice.actions;
+```
+
+Update store.ts
+
+```csharp
+// productParams.ts
+
+export type ProductParams = {
+  orderBy: string;
+  searchTerm?: string;
+  types?: string[];
+  brands?: string[];
+  pageNumber: number;
+  pageSize: number;
+};
+```
+
+Using it:
+
+```csharp
+// As an endpoint in catalogAPI.ts
+
+fetchProducts: builder.query<Product[], ProductParams>({
+      query: (productParams) => {
+        return { url: "product", params: productParams };
+      },
+    }),
+```
+
+What params means here
+
+In RTK Query, the query function can return an object instead of just a string. That object supports several keys like:
+
+`url → the endpoint path ("product" here).`
+
+`method → HTTP verb (default = "GET").`
+
+`params → an object that RTK Query will serialize into query string parameters for the request.`
+
+So if:
+
+`productParams = { pageNumber: 2, pageSize: 10 }`
+
+then the request sent is:
+
+GET /product?pageNumber=2&pageSize=10
+
+** Since we have made chances in method calling we need some changes in Catalog.tsx **
+
+```csharp
+... Catalog(){
+  const productParams = useAppSelector(state => state.catalog); // using slice
+  const { data, isLoading } = useFetchProductsQuery(productParams);
+  ...
+}
+```
+
+## Searching
+
+Since, we are sending parameters "productParams" to the API, we can easily implement a search feature by updating the "searchTerm" in the Redux state.
+
+```csharp
+// Search.tsx
+import { TextField } from "@mui/material";
+import { useAppDispatch, useAppSelector } from "../../app/store/store";
+import { setSearchTerm } from "./catalogSlice";
+
+const Search = () => {
+  const {searchTerm} = useAppSelector((state) => state.catalog);
+  const dispatch = useAppDispatch();
+  return (
+    <TextField
+      label="Search products"
+      variant="outlined"
+      fullWidth
+      type="search"
+      value={searchTerm}
+      onChange={e => dispatch(setSearchTerm(e.target.value))}
+    />
+  );
+};
+
+export default Search;
+```
+
+Thus when dispatching the `setSearchTerm` action, the `searchTerm` in the Redux state is updated, which in turn updates the `productParams` sent to the API. This allows for a seamless search experience as the user types in the search field.
+
+## Making Radio button functionality re-usable
+
+```csharp
+// RadioButtonGroup.tsx
+
+import {
+  FormControl,
+  FormControlLabel,
+  Radio,
+  RadioGroup,
+} from "@mui/material";
+import type { ChangeEvent } from "react";
+
+type Props = {
+  options: { value: string; label: string }[];
+  onChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  selectedValue: string;
+};
+
+export default function RadioButtonGroup({
+  options,
+  onChange,
+  selectedValue,
+}: Props) {
+  return (
+    <FormControl>
+      <RadioGroup onChange={onChange} value={selectedValue} sx={{ my: 0 }}>
+        {options.map(({ value, label }) => (
+          <FormControlLabel
+            key={label}
+            control={<Radio color="secondary" sx={{ py: 0.7 }} />}
+            label={label}
+            value={value}
+          />
+        ))}
+      </RadioGroup>
+    </FormControl>
+  );
+}
+```
+
+```csharp
+// Filters.tsx
+<Paper sx={{ p: 3 }}>
+  <RadioButtonGroup
+    selectedValue={orderBy}
+    options={sortOptions}
+    onChange={(e) => dispatch(setOrderBy(e.target.value))}
+  />
+</Paper>
+```
+
+## Check Box
+
+```csharp
+import { FormControlLabel, FormGroup } from "@mui/material";
+import CheckBox from "@mui/material/Checkbox";
+import { useEffect, useState } from "react";
+
+type Props = {
+  items: string[];
+  checked: string[];
+  onChange: (items: string[]) => void;
+};
+
+export default function CheckboxButtons({ items, checked, onChange }: Props) {
+  const [checkedItems, setCheckedItems] = useState(checked);
+  useEffect(() => {
+    setCheckedItems(checked);
+  }, [checked]);
+
+  const handleToggle = (value: string) => {
+    const updatedChecked = checkedItems?.includes(value)
+      ? checkedItems.filter((item) => item !== value) // filters all items excrpt the one toggled
+      : [...checkedItems, value];
+
+    setCheckedItems(updatedChecked);
+    onChange(updatedChecked);
+  };
+
+  return (
+    <FormGroup>
+      {items.map((item) => (
+        <FormControlLabel
+          key={item}
+          control={
+            <CheckBox
+              checked={checkedItems.includes(item)}
+              onClick={() => handleToggle(item)}
+              color="secondary"
+              sx={{ py: 0.7, fontSize: 40 }}
+            />
+          }
+          label={item}
+        />
+      ))}
+    </FormGroup>
+  );
+}
+```
+
+Also for array of brands to use in api, we have
+
+```csharp
+fetchFilters: builder.query<{ brands: string[]; types: string[] }, void>({
+  query: () => "products/filters",
+})
+```
+
+which will automatically generate url like this
+
+```bash
+GET /products/filters?brands=Nike,Adidas&types=Shoes,Apparel
+```
+
+So we now need to just `setBrands`
+
+```html
+<Paper sx={{ p: 3 }}>
+  <CheckboxButtons
+    items={data?.brands}
+    checked={brands}
+    onChange={(items: string[]) => dispatch(setBrands(items))}
+  />
+</Paper>
+```
+
+## Pagination Component
+
+Pagination Model
+
+```typescript
+export type Pagination = {
+  currentPage: number;
+  totalPages: number;
+  pageSize: number;
+  totalCount: number;
+};
+```
+
+### Retrieving pagination info
+
+Previously we only fetched products without pagination info:
+
+```typescript
+fetchProducts: builder.query<Product[], ProductParams>({
+      query: (productParams) => {
+        return { url: "products", params: filterEmptyValues(productParams) };
+      },
+    }),
+```
+
+Since we have added pagination to header:
+
+```typescript
+    fetchProducts: builder.query<
+      { items: Product[]; pagination: Pagination },
+      ProductParams
+    >({
+      query: (productParams) => {
+        return { url: "products", params: filterEmptyValues(productParams) };
+      },
+      transformResponse: (items: Product[], meta) => {
+        const paginationHeader = meta?.response?.headers.get('Pagination');
+        const pagination = paginationHeader ? JSON.parse(paginationHeader):null;
+        return {items, pagination};
+      }
+    }),
+```
+
+items → the raw JSON array returned by the API (res.json()).
+meta → metadata about the HTTP response (headers, status, etc.)
+
+**1. Why meta.response includes the raw response**
+
+Even though RTK Query already parses the body and gives it to you as items, there are a few reasons why having the raw Response object in meta is useful:
+
+- Access to headers
+- HTTP headers are part of the raw response, not the body.
+- You often want something like X-Pagination or ETag without modifying your server payload.
+- Access to status and metadata
+- meta.response.status → 200, 404, 500 etc.
+- meta.response.ok → boolean success/failure
+- Advanced debugging or logging
+
+You can inspect things like redirected URLs, content length, or even read the raw body again if needed.
+
+Flexibility
+
+Some APIs return both body and important info in headers. Without giving the raw Response, you’d need another mechanism to expose that info.
+
+So yes, it’s technically “redundant” to have the raw body in meta.response.body, but it’s mostly about keeping access to headers, status, and the complete Fetch response.
+
+**2. About meta.response.headers**
+
+headers are indeed part of the raw HTTP response, not the parsed JSON body.<br>
+So when you do:
+
+`meta?.response?.headers.get('Pagination')`
+
+You’re reading the raw header value. It’s not part of the parsed items; it’s still “metadata about the response”.<br>
+Even if RTK Query parsed the JSON body, headers remain untouched and only accessible through the raw response.
+
+## Pagination component
+
+```typescript
+import { Box, Pagination, Typography } from "@mui/material";
+import type { data } from "react-router-dom";
+import type { Pagination as PaginationType } from "../../Models/pagination";
+
+type Props = {
+  metadata: PaginationType;
+  onPageChange: (page: number) => void;
+};
+
+export default function AppPagination({ metadata, onPageChange }: Props) {
+  const { currentPage, totalPages, pageSize, totalCount } = metadata;
+  const startItem = (currentPage - 1) * pageSize + 1;
+  const endItem = Math.min(currentPage * pageSize, totalCount);
+  return (
+    <Box
+      display="flex"
+      justifyContent="space-between"
+      alignItems="center"
+      marginTop={3}
+    >
+      <Typography>
+        Displaying {startItem} - {endItem} of {totalCount} items
+      </Typography>
+      <Pagination
+        color="secondary"
+        size="large"
+        count={totalPages}
+        page={currentPage}
+        onChange={(_, page) => onPageChange(page)} // on change sends event and page no
+      />
+    </Box>
+  );
+}
+```
+
+To use it
+
+```Html
+<AppPagination
+  metadata={data.pagination}
+  onPageChange={(page: number) => dispatch(setPageNumber(page))}
+/>
+```
+
+### Scroll Restoration by router
+
+In App.tsx just below theme provider add `<ScrollRestoration />`.
+
+# Identity
+
+- Password hashing
+- Password validation
+- User storage
+- Role management
+
+There are many resources available from Entity Framework and ASP.NET Core Identity endpoints that can help you implement these features.
+
+We are not going to use JWT tokens here, instead we will use cookies.
+
+## What is provides as end points
+
+POST:
+
+- /register
+- /login
+- /refresh (for JWT tokens)
+- /resendConfirmationEmail
+- /forgotPassword
+- /resetPassword
+- /manage/2fa
+- /manage/info
+
+GET:
+
+- /confirmEmail
+- /manage/info
+
+Microsoft specifically recommend to use `app.MapIdentityApi<User>();` to secure a WebAPI for SPAs.
+
+It also provides us security defaults
+
+## Cookie Authentication
+
+- Sent with every request to API server
+- Http only. (Not accessible via JavaScript)
+- Only available in browser-based clients not mobile apps
+- Microsoft recommended for SPAs
+
+## Installition of identitp packages (NuGet)
+
+- Microsoft.AspNetCore.Identity.EntityFrameworkCore
+
+Add to API.csproj
+
+Just extend IdentityUser in User class
+
+```csharp
+public class User : IdentityUser{ ... }
+```
+
+**DbContext** <br>
+This is the base class in Entity Framework Core used to interact with your database.
+
+- **Purpose**: Manages your application's data models and handles CRUD operations.
+- **Use Case**: Ideal for custom entities like Product, Order, BlogPost, etc.
+- **Customization**: You define your own DbSet<T> properties and configure relationships, keys, etc.
+
+**IdentityDbContext**
+This is a specialized version of DbContext that includes all the tables and configurations needed for ASP.NET Identity.
+
+- **Purpose**: Manages user authentication and authorization data.
+- **Use Case**: Automatically includes tables like AspNetUsers, AspNetRoles, AspNetUserClaims, etc.
+- **Customization**: You can extend it with your own user class and additional entities.
+
+So we change our StoreContext to extend IdentityDbContext
+
+```csharp
+public class StoreContext(DbContextOptions options) : IdentityDbContext<User>(options) { ... }
+```
+
+User is our class that extends IdentityUser so that DbContext can recognize it as a valid user entity.
+
+Lets make some configurations in StoreContext.cs
+
+```csharp
+protected override void OnModelCreating(ModelBuilder builder)
+    {
+        base.OnModelCreating(builder);
+        builder.Entity<IdentityRole>()
+            .HasData(
+                new IdentityRole {Id= "afdbaf5e-0791-4739-9847-0f08a1d5906e", Name = "Member", NormalizedName = "MEMBER" },
+                new IdentityRole {Id= "f5288007-745f-410e-b301-675538e852e7", Name = "Admin", NormalizedName = "ADMIN" }
+            );
+
+    }
+```
+
+**builder.Entity<IdentityRole>().HasData(...)**
+
+- You're telling EF Core to prepopulate the AspNetRoles table with two roles: Member and Admin.
+- This is called data seeding—it happens during migrations.
+
+### Id, Name, NormalizedName
+
+- Id: A fixed GUID for each role. Required for seeding because EF Core needs explicit primary keys.
+- Name: The display name of the role.
+- NormalizedName: Uppercase version used for case-insensitive lookups.
+
+- `Entity<IdentityRole>` Specifies that we're configuring the IdentityRole entity, which represents roles in ASP.NET Identity (e.g., Admin, Member).
+- `HasData(...)`: By calling .HasData(...), you're inserting two predefined records into that table:
+  One with the role name "Member" <br>
+  One with the role name "Admin" <br>
+
+- `IdentityRole`: Built-in class in ASP.NET Identity representing a role.
+
+Seeding, in the context of Entity Framework Core (EF Core), means preloading your database with initial data—like default roles, admin users, or lookup tables—when the database is first created or updated via migrations
+
+## Configuring Identity in Program.cs
+
+Among bulder Services add:
+
+```csharp
+builder.Services.AddIdentityApiEndpoints<User>(
+    opt =>
+    {
+        opt.User.RequireUniqueEmail = true;
+        // some rules for passwords are default by .Net. So we need not specify them
+    }
+).AddRoles<IdentityRole>().AddEntityFrameworkStores<StoreContext>();
+```
+
+- The options parameter is injected by the ASP.NET Core framework.
+- It comes from the Options pattern, which is how .NET handles configuration for services like Identity.
+
+`AddEntityFrameworkStores<StoreContext>()` tells ASP.NET Identity to use Entity Framework Core and your custom StoreContext class to persist identity data like users, roles, claims, logins, and tokens.
+
+### Among UseSomethings add:
+
+```csharp
+app.UseAuthentication();
+app.UseAuthorization();
+```
+
+### Below MapControllers add:
+
+`app.MapGroup("api").MapIdentityApi<User>();`
+
+`app.MapControllers();`
+This line enables attribute routing for your MVC or API controllers.
+What It Does:
+
+- Scans your app for classes decorated with [ApiController] or [Controller].
+- Maps routes based on [Route], [HttpGet], [HttpPost], etc.
+- Adds endpoints to the routing table so requests like GET /products or POST /orders hit the right controller methods.
+
+`app.MapGroup("api").MapIdentityApi<User>();`
+This line sets up built-in Identity endpoints under the /api route group.
+
+What It Does:
+
+- Registers endpoints like:
+- POST /api/login
+- POST /api/register
+- POST /api/forgotpassword
+- Uses the User class (your Identity model) to handle authentication and user management.
+- These endpoints are auto-wired to UserManager, SignInManager, and token services.
+
+Why Use MapGroup("api")?
+
+- It scopes all Identity endpoints under /api, keeping your URL structure clean and RESTful.
+- You could later add other grouped endpoints like app.MapGroup("api/products").
+
+In DbInitializer, if database is empty, we seed an admin and a user using userManager and its inbuilts.
+
+```csharp
+public static void InitDb(WebApplication app)
+{
+    ...
+    var userManager = scope.ServiceProvider.GetRequiredService<UserManager<User>>()
+            ?? throw new InvalidOperationException("Failed to retrieve user Manager");
+    _ = SeedData(context, userManager); // discarding what ever returning
+}
+private static async Task SeedData(StoreContext context, UserManager<User> userManager)
+    {
+        context.Database.Migrate();
+
+        if (!userManager.Users.Any())
+        {
+            // Seed some users in
+            var user = new User
+            {
+                UserName = "bob@test.com",
+                Email = "bob@test.com"
+            };
+
+            await userManager.CreateAsync(user, "Pa##w0rd"); // some complex password
+            await userManager.AddToRoleAsync(user, "Member");
+
+            var admin = new User
+            {
+                UserName = "admin@test.com",
+                Email = "admin@test.com"
+            };
+
+            await userManager.CreateAsync(admin, "Pa$$w0rd"); // some complex password
+            await userManager.AddToRolesAsync(admin, ["Member", "Admin"]);
+        }
+        ...
+    }
+```
+
+UserManager is a service provided by ASP.NET Identity that helps manage user accounts. It provides methods for creating, updating, deleting, and retrieving users, as well as managing passwords (hashing), roles, and claims.
+
+### Next stop app and migrate
+
+```bash
+dotnet ef migrations add IdentityAdded
+```
+
+** Wait, why have we given name and emails both as emails?**
+
+If we look in <a>https://github.com/dotnet/aspnetcore/blob/main/src/Identity/Core/src/IdentityApiEndpointRouteBuilderExtensions.cs</a> (freesource code of what our internal Identity api uses) for login part API, we see that it uses signin manager to signIn user. Here Email and Password are passed to signInManager.
+
+```csharp
+routeGroup.MapPost("/login", async Task<Results<Ok<AccessTokenResponse>, EmptyHttpResult, ProblemHttpResult>>
+    ([FromBody] LoginRequest login, [FromQuery] bool? useCookies, [FromQuery] bool? useSessionCookies, [FromServices] IServiceProvider sp) =>
+{
+    var signInManager = sp.GetRequiredService<SignInManager<TUser>>();
+
+    var useCookieScheme = (useCookies == true) || (useSessionCookies == true);
+    var isPersistent = (useCookies == true) && (useSessionCookies != true);
+    signInManager.AuthenticationScheme = useCookieScheme ? IdentityConstants.ApplicationScheme : IdentityConstants.BearerScheme;
+
+    var result = await signInManager.PasswordSignInAsync(login.Email, login.Password, isPersistent, lockoutOnFailure: true);
+
+    ...
+});
+```
+
+Every thing seem fine, but if we look at `PasswordSignInAsync` method of SignInManager class, we see that it uses `FindByNameAsync` method of UserManager class to find user by name.
+
+<a>https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.identity.signinmanager-1.passwordsigninasync?view=aspnetcore-9.0</a>
+
+```csharp
+public virtual System.Threading.Tasks.Task<Microsoft.AspNetCore.Identity.SignInResult> PasswordSignInAsync(string userName, string password, bool isPersistent, bool lockoutOnFailure);
+```
+
+It expects userName as first parameter, not email. Which is weird. So we have to give email as username too.
+
+### Verifying url
+
+Since earlier we have decided upon using cookies we need to pass `useCookies=true` in query string to make it work.
+
+```bash
+/api/login?useCookies=true
+```
+
+Also it is Http only cookie, so we cant see it in Application tab of inspect element. But we can see it in network tab. This is more secure cause we can't access it from javascript.
+
+## AccountController
+
+To address above mentioned "Weird" issue, we will do a custom registration endpoint.
+
+**ModelState**
+
+- Each HTTP request → the framework creates a new controller instance.
+- That controller instance has its own fresh ModelState property (a new ModelStateDictionary).
+- The Model Binder runs before your action method, filling ModelState with binding/validation results.
+- Then your action executes and you read/write ModelState.
+- When the request ends, the controller instance (and its ModelState) is discarded.
+
+**New DTO**
+
+```csharp
+namespace API.DTOs;
+
+public class RegisterDto
+{
+    public required string Email { get; set; }
+    public required string Password { get; set; }
+}
+```
+
+```csharp
+public class AccountController(SignInManager<User> signInManager) : BaseApiController
+{
+    [HttpPost("register")]
+    public async Task<ActionResult> RegisterUser(RegisterDto registerDto)
+    {
+        var user = new User { UserName = registerDto.Email, Email = registerDto.Email };
+        var result = await signInManager.UserManager.CreateAsync(user, registerDto.Password);
+
+        if (!result.Succeeded)
+        {
+            foreach (var error in result.Errors)
+            {
+                ModelState.AddModelError(error.Code, error.Description);
+            }
+            return ValidationProblem();
+        }
+        await signInManager.UserManager.AddToRoleAsync(user, "Member");
+        return Ok();
+    }
+}
+```
+
+`ValidationProblem()`
+
+- This method generates a 400 Bad Request response with a standardized problem details format.
+- It includes validation errors from ModelState in the response body.
+
+The `Required` decorator tells the framework that:
+“This property must have a non-null and non-empty value when the model is validated.”
+
+Else throws error in ModelState which we return as BadRequest using `ValidationProblem()` method.
+
+instead of required keyword we can also use `[Required]` attribute from `System.ComponentModel.DataAnnotations` namespace.
+
+`[Required]`<br>
+`
+public string Email { get; set; } = string.Empty;
+
+## Endpoint for User Info
+
+The default endpoint given by dotnet is `{{url}}/api/manage/info`, which simpily returns user's `{email:string,  isEmailConfrimed: Boolean}`.
+
+But we would like more like roles etc.
+
+```csharp
+    [HttpGet("user-info")]
+    public async Task<IActionResult> GetUserInfo() //no params needed
+    {
+        if (User.Identity?.IsAuthenticated == false) return NoContent(); // Not an error, just no user
+
+        var user = await signInManager.UserManager.GetUserAsync(User);
+        if (user == null) return Unauthorized();
+
+        var roles = await signInManager.UserManager.GetRolesAsync(user);
+        return Ok(new
+        {
+            user.Email,
+            user.UserName,
+            Roles = roles
+        });
+    }
+```
+
+In program.cs we added `app.UseAuthentication();` which enables authentication middleware that processes authentication for incoming requests. It includes setting the User property on HttpContext based on the authentication cookie or token.
+
+In the above code `User` is the shorthand for `HttpContext.User`, which represents the currently authenticated user making the request.
+
+A Principal represents the security context of the current user. It answers two key questions:
+
+- Who is the user? → via IIdentity
+- What roles or permissions do they have? → via role membership
+
+ClaimsPrincipal is an nothing but the principal that contains a collection of claims(here roles, emails) about the user. It's like a mapping of user to their attributes.
+
+## Log out end point
+
+```csharp
+[HttpPost("logout")]
+public async Task<ActionResult> Logout()
+{
+    await signInManager.SignOutAsync();
+    return NoContent();
+}
+```
+
+## User Address endpoint
+
+Creating Address entity
+
+```csharp
+using System;
+using System.Text.Json.Serialization;
+
+namespace API.Entities;
+
+public class Address
+{
+    [JsonIgnore]
+    public int Id { get; set; } // we dont want to send Id back
+    public required string Name { get; set; }
+    public required string Line1 { get; set; }
+    public string? Line2 { get; set; }
+    public required string City { get; set; }
+    public required string State { get; set; }
+    // there will be '_' in b/w postal code name in stripe etc which differs from C# namming convention
+    [JsonPropertyName("postal_code")]
+    public required string PostalCode { get; set; }
+    public required string Country { get; set; }
+}
+```
+
+Also here, we are going to use 1-1 relationship b/w User and Address.
+
+Add address field to User class in User.cs
+
+```csharp
+public class User : IdentityUser
+{
+    public int? AddressId { get; set; }
+    public Address? Address { get; set; } // not forcing to add address
+}
+```
+
+**Since we have used the same User in DbContext, we need to make migration again.**
+
+```csharp
+var user = await context.Users
+    .Include(u => u.Address)
+    .FirstOrDefaultAsync(u => u.UserName == "karri@example.com");
+```
+
+This tells EF Core to:
+
+- Query the Users table
+- Join with the Addresses table
+- Return a User object with its Address property already populated
+
+## Address Endpoints
+
+// Nothing special, check in AccountController.cs
+
+# Identity Client side
+
+## Creating RTK query for identity
+
+As a new feature accounts, create a new file accountAPI.ts
+
+`object` type is used when we want to represent a non-primitive type, such as an object with properties or a complex data structure. It's just a general placeholder for "some kind of object".
+
+builder.mutation is for operations that change data (POST, PUT, DELETE).
+builder.query is for operations that fetch data (GET).
+
+** Nothing special, check in accountAPI.ts and user.ts **
+
+Also add accounts Api reducer path to store.ts
+
+## Creating form for login
+
+Auto focus keeps the cursor in email field when page loads.
+
+Link from react router dom is used to navigate b/w pages without reloading whole page.
+
+Refer LoginForm.tsx.
+
+Add this route to router i.e., Routes.tsx
+
+## Introducing React Hook Form + Zod
+
+**What's Zod?**
+Zod is a TypeScript-first schema declaration and validation library. It allows you to define the shape of your data using a fluent API, and then validate that data at runtime on both the client and server sides.
+
+```bash
+npm install react-hook-form
+npm install zod @hookform/resolvers
+```
+
+**What are react-hook-form?**
+It simply provides many hooks like register, handleSubmit, formState etc to manage forms in react.
+register (from useForm) → Connects input fields to the form.
+
+#### register
+
+```typescript
+import { useForm } from "react-hook-form";
+
+// in login form function
+
+const {
+  register,
+  handleSubmit,
+  formState: { errors },
+} = useForm<LoginSchema>();
+```
+
+Later in TextField of MUI
+
+```typescript
+<TextField
+  fullWidth
+  label="Email"
+  autoFocus
+  {...register("email", { required: "Email is required" })}
+  error={!!errors.email}
+  helperText={errors.email?.message}
+/>
+```
+
+`{...register("email", { required: "Email is required" })}` : will add some props to TextField like onChange, onBlur, name, ref etc. `required` is for validation.
+
+#### formState
+
+formState (from useForm) → Provides state info like:
+
+- isDirty → if any field has changed
+- isValid → if form passes validation
+- isSubmitting → while submitting
+- errors → validation errors
+- touchedFields → which fields have been touched
+
+out of them we can also only use errors for now.
+
+#### handleSubmit
+
+Given to form's onSubmit. It:
+
+- Wraps your form submission handler.
+- Automatically runs validation for all registered fields.
+- If validation passes → calls your onSubmit function with form data.
+- If validation fails → skips your onSubmit and instead puts errors into formState.errors.
+
+```tsx
+<Box
+  component="form"
+  onSubmit={handleSubmit(onSubmit)}
+  width="100%"
+  display="flex"
+  flexDirection="column"
+  gap={3}
+  my={3}
+>
+{children...}
+</Box>
+```
+
+We can inject our schema to useForm by just passing it as generic type parameter like `useForm<LoginSchema>()` and a resolver that uses Zod for validation. Also we can add mode so that validation happens as we type.
+
+```typescript
+const {
+  register,
+  handleSubmit,
+  formState: { errors },
+} = useForm<LoginSchema>({
+  mode: "onTouched",
+  resolver: zodResolver(loginSchema),
+});
+```
+
+In this way our form validation logic is abstracted away from UI code.
+
+## Our LoginSchema
+
+```typescript
+import { z } from "zod";
+export const loginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(6, {
+    message: "Password must be at least 6 characters",
+  }),
+});
+
+export type LoginSchema = z.infer<typeof loginSchema>;
+```
+
+z.infer is a utility that extracts the TypeScript type from a Zod schema. It allows you to derive the static type representation of the schema, ensuring type safety and consistency between your validation logic and TypeScript types.
+
+Now we can remove required validation from register method of react-hook-form since it is already handled by zod schema.
+
+For email and etc we can see we already have some built in validation methods in zod like email(), min(), max() etc.
+
+## Login logic
+
+we pass data to login mutation. First give valid type to useLoginMutation `login: builder.mutation<void, LoginSchema>`.
+
+Also we can use isLoading from useLoginMutation and give it to MUI to disable button while submitting and also it automatically adds a loading bar we implemented.
+
+```typescript
+const [login, { isLoading }] = useLoginMutation();
+```
+
+```html
+<button disabled="{isLoading}" variant="contained" type="submit">
+  Sign in
+</button>
+```
+
+## Adding user menu
+
+Copying user menu code in MUI to Layouts/UserMenu.tsx.
+
+changes: added user prop to use it to show menu items or login/register button accordingly.
+
+see UserMenu.tsx and navbar in Layout.tsx for implementation details.
+
+To get user info lets tweek login Api a bit.
+
+We know:
+Summary Table
+| **Concept** | **Role in RTK Query** |
+|--------------------|--------------------------------------------------------|
+| `tagTypes` | Declares valid tag categories |
+| `providesTags` | Labels cached query data with tags |
+| `invalidatesTags` | Marks tags as stale after a mutation |
+
+so using tag we can later access it in cache and use it to invalidate it.
+
+See for userInfo and login's (onQueryStarted method in it) endpoints in accountApi.ts for more details.
+
+## Register
+
+To mentain complexity of password from user lets use regex.
+From `regxlibrary` in web lets find an expression for password.
+`https://www.regexlib.com/?AspxAutoDetectCookieSupport=1`
+
+Search for expression with our needs (atleast: 1 capital, 1 small, 1 special char, b/w 6-10 char long...), the one microsoft uses.
+
+Here is the regular expression we will use:
+
+```regex
+(?=^.{6,10}$)(?=.*\d)(?=.*[a-z])(?=.*[A-Z])(?=.*[!@#$%^&amp;*()_+}{&quot;:;'?/&gt;.&lt;,])(?!.*\s).*$
+```
+
+**Refer** `registerSchema.ts` for complete code. Similar changes in `accountApi.ts` and `RegisterForm.tsx`.
+
+### Notifying about failures (Error handling)
+
+We are using setError hook from react-hook-form to set error manually.
+
+```typescript
+const onSubmit = async (data: RegisterSchema) => {
+  try {
+    await registerUser(data).unwrap(); // to access whats inside by getting raw object
+  } catch (error) {
+    const apiError = error as { message: string };
+    if (apiError.message && typeof apiError.message === "string") {
+      const errorArray = apiError.message.split(",");
+      errorArray.forEach((e) => {
+        if (e.includes("Password")) {
+          setError("password", { message: e }); // sets error regarding password field
+        } else if (e.includes("Email")) {
+          setError("email", { message: e }); // sets error regarding email field
+        }
+      });
+    }
+  }
+};
+```
+
+## Adding Private Routes
+
+create a new component RequireAuth.tsx
+
+```typescript
+import { Navigate, Outlet, useLocation } from "react-router-dom";
+import { useUserInfoQuery } from "../../features/account/accountApi";
+
+export default function RequireAuth() {
+  const { data: user, isLoading } = useUserInfoQuery();
+  const location = useLocation();
+
+  if (isLoading) return <div>Loading...</div>;
+
+  if (!user) {
+    return <Navigate to="/login" state={{ from: location }} />;
+  }
+  return (
+    <Outlet /> // our component is usually loaded up here
+  );
+}
+```
+
+Now wrap private routes in Routes.tsx with `<Route element={<RequireAuth />}> ... </Route>`.
+
+Refer to routes.tsx for more details.
+
+To persist the page from where user left off, we use `useLocation` hook to get current location and pass it to login page using state prop of Navigate component.
+
+Since we added this line: `<Navigate to="/login" state={{ from: location }} />`, we can access this state in login page using `useLocation` hook.
+
+```typescript
+const onSubmit = async (data: LoginSchema) => {
+  await login(data);
+  navigate(location.state?.from || "/catalog");
+};
+```
+
+But now we are staying in same login page rather.
+
+So we will use userInfo in LoginForm also but here we use LazyQuery. Why LazyQuery?
+Lazy queries are used when you want to manually trigger a query based on some event or condition, rather than having it automatically execute when the component renders.
+
+#### How does it helps?
+
+By ChatGPT:
+
+The key is state synchronization between your backend and your frontend store/cache (likely Redux Toolkit Query, since you’re using useLoginMutation and useLazyUserInfoQuery).
+
+login() only returns auth tokens (or sets cookies).
+It doesn’t automatically update your frontend state with "this is the current user". At this point, your app technically doesn’t know you’re logged in.
+
+Your app probably has some auth guard logic (like a ProtectedRoute or a useEffect that checks isAuthenticated / currentUser).
+That logic depends on userInfo being in the Redux store. If it’s null, the guard assumes you’re unauthenticated and redirects you right back to /login.
+
+fetchUserInfo() fixes that.
+After login, it calls an endpoint like /me or /user/profile to fetch the logged-in user’s info. This populates Redux state (user slice), so your app now knows: "Yes, the user is authenticated."
+With that in place, when you call navigate(...), the route guard lets you through instead of bouncing you back to /login.
+
+# Payments ₹ $ ¥
+
+This is going to be handled by stripe and is also going to be a serious section.
+PCI Compliance is documentation that we should follow to ensure that we are handling payment information securely. Using a trusted third-party like Stripe offloads much of that burden.
+
+Stripe takes 2.9% + 30¢ (cents) per successful transaction.
+
+3DS - 3D Secure is an additional layer of authentication for online credit and debit card transactions. It helps prevent fraud by requiring the cardholder to complete an extra verification step, such as entering a password or a code sent to their phone, during the checkout process.
+
+We use SCA - Strong Customer Authentication, a requirement under the European Union's Revised Payment Services Directive (PSD2). It mandates multi-factor authentication for online payments to enhance security and reduce fraud.
+
+The one that is used in canada is, when payment is done stripe generates a token. This token is sent to client and client sends it to server. Server then uses this token to confirm payment.
+
+But in SCA, the flow is different. Here,
+
+- When user went to checkout page, before the user actually confirm the order, we will request API to create a **payment intent** (An intent to pay at feature point).
+- Then will send that payment intent request to stripe and stripe will create and retuen **PaymentIntentId** and **ClientSecret**.
+- We keep Clientsecret into shoping cart and return it to user.
+
+At this point user can still add remove items from cart. When at any time user come back to checkout page we will update the payment intent with latest amount and keep repeating it up until the point where the user decides they can pay the order.
+
+- Here user will enter card details and we will send the card details along with client secret directly to stripe to confirm the payment. Stripe will return the success or failure of payment to client.
+- At this point order can be created and API will acknowledge the order and successfull payment. But we can trust client side. So order will be in a pending payment state up until we get a webhook from stripe saying payment is successfull.
+- Stripe will use a secret webhook key to sign the webhook request so that API can trust it. And we could then update the order status to paid or payment recieved and then notify user thet therir order is on the way.
+
+## Setting up stripe
+
+Not possible in india
+
+## Trying to switch to Razorpay
+
+Flow in Razorpay
+
+- Backend creates Order → gets order_id.
+- Frontend opens Razorpay Checkout with order_id.
+- Customer pays → Razorpay returns payment_id, order_id, signature to client.
+- Client sends details → Backend verifies signature.
+- Razorpay webhook confirms capture → Backend marks order as paid.
+- Setup my variables in appsettings.Development.json.
+
+Create a Services folder in API project and add a new class PaymentsService.cs and into that class inject IConfiguration to access the keys.
+
+## creating a Payment Entity
+
+```csharp
+namespace API.Entities;
+
+public class Payment
+{
+    public int Id { get; set; }
+    public string OrderId { get; set; } = null!;      // Razorpay order id
+    public string? PaymentId { get; set; }            // Razorpay payment id (filled after verification)
+    public long Amount { get; set; }                  // stored in paise
+    public string Status { get; set; } = "created";   // created / paid / failed
+    public string? BasketId { get; set; }             // link to your basket (string based on your existing basket id)
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+```
+
+Add DbSet in StoreContext.cs
+
+Next lets have a Dto for creating order CreateOrderDto.cs
+
+```csharp
+using System;
+
+namespace API.DTOs;
+
+public class CreateOrderDto
+{
+    public string BasketId { get; set; } = null!;
+}
+```
+
+Next lets have a Dto for payment so that we can use it for verifying payment PaymentVerifyDto.cs
+
+```csharp
+using System;
+
+namespace API.DTOs;
+
+public class PaymentVerifyDto
+{
+    // all these are returned by razorpay to client after payment
+    public string RazorpayOrderId { get; set; } = null!;
+    public string RazorpayPaymentId { get; set; } = null!;
+    public string RazorpaySignature { get; set; } = null!;
+}
+```
+
+Lets keep our logic in PaymentsService.cs
+
+First we need to create an order in razorpay
+
+```csharp
+public async Task<Entities.Order> CreateOrderAsync(string basketId, long amount)
+{
+    // 1. Convert to paise
+    var amountInPaise = amount * 100;
+
+    // 2. Create Razorpay client
+    var client = new RazorpayClient(_keyId, _keySecret);
+
+    // 3. Razorpay order options
+    var options = new Dictionary<string, object>
+    {
+        { "amount", amountInPaise },
+        { "currency", "INR" },
+        { "receipt", Guid.NewGuid().ToString() }
+    };
+
+    // 4. Create Razorpay order
+    var razorpayOrder = client.Order.Create(options);
+
+    // 5. Persist order in DB
+    var order = new Entities.Order
+    {
+        OrderId = razorpayOrder["id"].ToString(),
+        Amount = amountInPaise,
+        Status = "created",
+        BasketId = basketId
+    };
+
+    _context.Orders.Add(order);
+    await _context.SaveChangesAsync();
+
+    return order;
+}
+```
+
+Next we need to verify payment
+
+```csharp
+public async Task<bool> VerifyPaymentAsync(string orderId, string paymentId, string signature)
+{
+    var attributes = new Dictionary<string, string>
+    {
+        { "razorpay_order_id", orderId },
+        { "razorpay_payment_id", paymentId },
+        { "razorpay_signature", signature }
+    };
+
+    try
+    {
+        Utils.verifyPaymentSignature(attributes);
+
+        // Next steps (soon)
+        var order = await _context.Orders
+            .FirstOrDefaultAsync(x => x.OrderId == orderId);
+
+        if (order == null) return false;
+
+        order.PaymentId = paymentId;
+        order.Status = "paid";
+
+        await _context.SaveChangesAsync();
+        return true;
+    }
+    catch
+    {
+        return false;
+    }
+}
+```
+
+Next create PaymentsController.cs and inject PaymentsService into it.
+
+We also created DTOs for creating order and verifying payment as CreateOrderDto.cs and PaymentVerifyDto.cs respectively.
+
+Added DBsets in StoreContext.cs for Orders and Payments.
+
+Added CurrencyService.cs to convert from INR to USD for product prices.
+
+3️⃣ Razorpay Webhook (VERY IMPORTANT)
+4️⃣ Clear basket after payment
+5️⃣ Frontend Razorpay checkout
+6️⃣ Prevent duplicate payments (idempotency)
+
+## Razorpay Webhook
+
+This happens even if:
+
+- User closes browser
+- Network drops
+- Frontend never calls /verify
+- Someone tampers with client code
+
+👉 Webhooks are the final source of truth.
+
+Go to razorpay dashboard and create a webhook endpoint at: `https://storistq.com/api/payments/webhook`
+and select "Payment captured" event.
+
+But we can't. We need a publickly accessible url for that. So we will use ngrok for that.
+
+### Using ngrok for webhook testing
+
+#### setting up ngrok
+
+First install ngrok from `https://ngrok.com/download`. Running that application opens a terminal like window.
+
+Go to ngrok dash board and copy cmd line that has authtoken configured to you, and run it in terminal.
+
+Then run this command in terminal to expose local server running at 5001 port.
+
+```bash
+ngrok http https://localhost:5001
+```
+
+This will give you a public url like `https://unshaking-nonesoterically-darcie.ngrok-free.dev/api/payments/webhook` that tunnels to your localhost:5001.
+
+Secret is kept in appsettings.Development.json.
+
+We are using webhook instead of verify endpoint to mark order as paid because webhook is called by razorpay directly and is more secure.
+
+Frontend /verify is now OPTIONAL
+
+```csharp
+[HttpPost("webhook")]
+public async Task<IActionResult> RazorpayWebhook()
+{
+    using var reader = new StreamReader(Request.Body); // Reads raw JSON payload sent by Razorpay
+    //Required for signature verification
+    var body = await reader.ReadToEndAsync();
+
+    var signature = Request.Headers["X-Razorpay-Signature"].ToString();
+    // Razorpay sends an HMAC signature in this header
+    // Used to verify authenticity
+
+    if (!VerifyWebhookSignature(body, signature))
+        return Unauthorized();
+
+    await _paymentsService.HandleWebhookAsync(body);
+
+    return Ok();
+}
+```
+
+** Verifying signature: ** <br>
+We recreate Razorpay’s signature locally and compares it.
+
+```csharp
+private bool VerifyWebhookSignature(string payload, string signature)
+{
+    // Converts webhook secret to bytes
+    var secretBytes = System.Text.Encoding.UTF8.GetBytes(_webhookSecret);
+
+    // create hash value of payload using HMACSHA256 and convert to hex string
+    using var hmac = new HMACSHA256(secretBytes);
+    var hash = hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(payload));
+    var expectedSignature = Convert.ToHexString(hash).ToLower();
+
+    // compare signatures
+    return expectedSignature == signature;
+}
+```
+
+## Handling webhook payload
+
+How payload looks like:
+
+```json
+{
+  // --> root
+  "entity": "event",
+  "account_id": "acc_XXXXXXXXXXXXXX",
+  "event": "payment.captured",
+  "contains": ["payment"],
+  "payload": {
+    "payment": {
+      "entity": {
+        // id: The unique payment ID (e.g., pay_XXXXXXXXXXXXXX).
+        // amount: The payment amount in the smallest currency unit (e.g., paise for INR).
+        // currency: The currency code (e.g., INR).
+        // status: The status of the payment (which will be captured for this event).
+        // order_id: The associated order ID, if the payment was made against an order.
+        // method: The payment method used (e.g., card, netbanking, upi).
+        // description: A description of the payment.
+        // card: Details about the card used (if applicable and available).
+      }
+    }
+  },
+  "created_at": 1678881295
+}
+```
+
+```csharp
+public async Task HandleWebhookAsync(string payload)
+{
+    // parsing JSON payload to structured
+    using var doc = JsonDocument.Parse(payload);
+    var root = doc.RootElement;
+
+    var eventType = root.GetProperty("event").GetString();
+
+    if (eventType != "payment.captured")
+        return;
+
+    var payment = root
+        .GetProperty("payload")
+        .GetProperty("payment")
+        .GetProperty("entity");
+
+    var razorpayOrderId = payment.GetProperty("order_id").GetString();
+    var razorpayPaymentId = payment.GetProperty("id").GetString();
+    var amount = payment.GetProperty("amount").GetInt64();
+
+    // Idempotency check (exists or not in our database)
+    var existingPayment = await _context.Payments
+        .FirstOrDefaultAsync(p => p.PaymentId == razorpayPaymentId);
+
+    // if there => replay attack
+    if (existingPayment != null)
+        return;
+
+    // update order status to paid
+    var order = await _context.Orders
+        .FirstOrDefaultAsync(o => o.OrderId == razorpayOrderId);
+
+    if (order == null)
+        return;
+
+    order.Status = "paid";
+    order.PaymentId = razorpayPaymentId;
+
+    var newPayment = new Entities.Payment
+    {
+        OrderId = razorpayOrderId!,
+        PaymentId = razorpayPaymentId,
+        Amount = amount,
+        Status = "paid",
+        BasketId = order.BasketId
+    };
+
+    _context.Payments.Add(newPayment);
+    await _context.SaveChangesAsync();
+}
+```
+
+## Clearing basket after payment
+
+After a payment is confirmed (via webhook or verification):
+
+- Order is marked paid
+- Payment is recorded
+- Basket must be cleared
+- Basket must NOT be cleared before payment confirmation!
+
+This ensures:
+
+- No duplicate orders
+- No accidental re-payments
+- Clean user experience
+
+Also in PaymentsService.cs inside HandleWebhookAsync method after adding new payment and before saving changes to DB, we will clear basket.
+
+## Checkout page with a stepper
+
+Check features/checkout folder.
+
+Updated .env file to have:
+`VITE_RAZORPAY_KEY_ID=your_key_id_here`
+
+Vite only exposes environment variables to browser code if they start with VITE\_.
+
+# Modifying order entity
+
+## DDD-style Order Aggregate
+
+Created many entities related to order inside Order Aggregate.
+Next we created a claims principle extension method to get name of user. We have name and email both as email only. No we use them interchangeably.
+
+To use User.Identity to fetch orders in OrdersController.cs we have created an extension method in Extensions/ClaimsPrincipalExtensions.cs that gaurntees non null value.
+
+```csharp
+return user.Identity?.Name ?? throw new UnauthorizedAccessException();
+```
+
+## Adding OrderController
+
+We need 2 functionalities here:
+First is to get all orders of logged in user and second is to get specific order by id of logged in user.
+
+First we create Backend version of Order.
+We no longer need to send basketId too. We will fetch order based on user only.
+
+```csharp
+    public async Task<ActionResult<int>> CreateOrder(OrderDto orderDto)
+    {
+        var basket = await _context.Baskets.GetBasketWithItems(Request.Cookies["basketId"]);
+
+        if (basket == null || basket.Items.Count == 0)
+            return BadRequest("Basket is empty or not found");
+
+        var items = CreateOrderItems(basket.Items);
+        var subtotal = items.Sum(item => item.price * item.Quantity);
+        var deliveryFee = CalculatreDeliveryFee(subtotal);
+        var order = new Entities.OrderAggregate.Order
+        {
+            BuyerEmail = User.GetUsername(),
+            OrderItems = items,
+            ShippingAddress = orderDto.ShippingAddress, // Placeholder
+            Subtotal = subtotal,
+            DeliveryFee = (long)deliveryFee,
+            PaymentSummary = orderDto.PaymentSummary // Placeholder
+        };
+
+        _context.Orders2.Add(order);
+        _context.Baskets.Remove(basket);
+        Response.Cookies.Delete("basketId");
+        var result = await _context.SaveChangesAsync() > 0;
+
+        if(!result) return BadRequest("Problem creating order");
+        return CreatedAtAction(nameof(GetOrderDetails), new { id = order.Id }); // Placeholder return
+    }
+```
+
+Here CreatedAtAction method produces a 201 Created response, which is the standard HTTP status code for indicating that a new resource has been successfully created on the server. This is also appropriate here since we are creating a new order resource.
+
+We will now also update our PaymentService's CreateOrderAsync accordingly to remove basketId from Payment entity.
+
+Well what we did earlier is basically creating an payment intent.
+
+Now we are dealing with actual order creation.
+
+## ActionResult<T> and CreatedAtAction (Notes from Implementation)
+
+While implementing the Orders API, I ran into runtime issues related to response types and routing.
+This section documents how `ActionResult<T>` and `CreatedAtAction` work and how to use them correctly.
+
+---
+
+### ActionResult<T>
+
+In Web APIs, an endpoint may return:
+
+- Success data
+- Validation errors
+- Authorization errors
+- Not found responses
+
+A single return type is not sufficient for all cases.
+
+`ActionResult<T>` solves this by allowing an action to return:
+
+- A value of type `T`, or
+- An HTTP response (`BadRequest`, `NotFound`, etc.)
+
+Example:
+
+```csharp
+public async Task<ActionResult<int>> CreateOrder(OrderDto orderDto)
+```
+
+If a value of `T` is returned:
+
+```csharp
+return order.Id;
+```
+
+ASP.NET Core automatically converts it to:
+
+```
+200 OK
+```
+
+If an HTTP result is returned:
+
+```csharp
+return BadRequest("Basket is empty");
+```
+
+The framework sends the corresponding status code and message.
+
+---
+
+### CreatedAtAction
+
+When creating a new resource, REST conventions recommend:
+
+- Returning `201 Created`
+- Including a `Location` header pointing to the new resource
+
+`CreatedAtAction` is used for this purpose.
+
+Signature:
+
+```csharp
+CreatedAtAction(string actionName, object routeValues, object value)
+```
+
+Example:
+
+```csharp
+return CreatedAtAction(
+    nameof(GetOrderDetails),
+    new { id = order.Id },
+    order.Id
+);
+```
+
+This produces:
+
+- HTTP 201
+- A `Location` header resolved using the target action’s route
+- A response body containing the supplied value
+
+---
+
+### Common Pitfall
+
+`CreatedAtAction` **must include a response body**.
+
+Incorrect usage:
+
+```csharp
+CreatedAtAction(nameof(GetOrderDetails), new { id = order.Id });
+```
+
+This causes a runtime error because ASP.NET Core expects a value to serialize for `ActionResult<T>`.
+
+---
+
+### When to Use CreatedAtAction
+
+Use it when:
+
+- A new resource is created
+- A corresponding GET endpoint exists
+- The resource should be discoverable via a URL
+
+Examples:
+
+- Orders
+- Products
+- Users
+
+---
+
+### When Not to Use It
+
+Do not use `CreatedAtAction` for:
+
+- Login or logout
+- Payments
+- Webhooks
+- Command-style endpoints
+
+In these cases, returning `Ok()` or `NoContent()` is sufficient.
+
+---
+
+## Shapping Order JSON data
+
+OrderDto.cs && OrderItemDto.cs
+
+Also added an extension method to map Order to OrderDto in MappingProfiles/OrderMappingProfile.cs where we map Objects to DTOs mannually.
+
+### Eager loading vs Projection
+
+```csharp
+public async Task<ActionResult<List<Entities.OrderAggregate.Order>>> GetOrders()
+{
+    var email = User.Identity?.Name;
+    var orders = await context.Orders2
+        .Include(o => o.OrderItems)
+        .Where(o => o.BuyerEmail == User.GetUsername())
+        .ToListAsync();
+
+    return Ok(orders);
+}
+```
+
+We first load all order items related to the order using eager loading with Include.
+However, this fetches entire OrderItem entities, which may contain unnecessary data.
+
+So we use projection to directly shape the data into OrderDto and OrderItemDto:
+
+```csharp
+using System;
+using API.DTOs;
+
+namespace API.Extensions;
+
+public static class OrderExtentions
+{
+    public static IQueryable<OrderDto> ProjectToDto(this IQueryable<Entities.OrderAggregate.Order> query)
+    {
+        return query.Select(order => new OrderDto
+        {
+            Id = order.Id,
+            BuyerEmail = order.BuyerEmail,
+            OrderDate = order.OrderDate,
+            ShippingAddress = order.ShippingAddress,
+            Subtotal = order.Subtotal,
+            DeliveryFee = order.DeliveryFee,
+            Discount = order.Discount,
+            OrderStatus = order.OrderStatus.ToString(),
+            PaymentSummary = order.PaymentSummary,
+            Total = order.GetTotal(),
+            OrderItems = order.OrderItems.Select(item => new OrderItemDto
+            {
+                ProductId = item.ItemOrdered.ProductId,
+                Name = item.ItemOrdered.Name,
+                PictureUrl = item.ItemOrdered.PictureUrl,
+                Price = item.Price,
+                Quantity = item.Quantity
+            }).ToList()
+        });
+    }
+}
+```
+
+Now we directly project the query results into the desired DTO shape, fetching only the necessary fields.
+
+```csharp
+public async Task<ActionResult<List<OrderDto>>> GetOrders()
+{
+    var email = User.Identity?.Name;
+    var orders = await context.Orders2
+        .ProjectToDto()
+        .Where(o => o.BuyerEmail == User.GetUsername())
+        .ToListAsync();
+
+    return orders;
+}
+```
+
+This returned ones are much lighter and efficient.
+
+Right after this we got:
+
+```json
+{
+ "title": "A tracking query is attempting to project an owned entity without a corresponding owner in its result, but owned entities cannot be tracked without their owner. Either include the owner entity in the result or make the query non-tracking using 'AsNoTracking'.",
+    "status": 500,
+    ...
+}
+```
+
+This error occurs because Entity Framework Core requires that owned entities be tracked along with their owners. When projecting owned entities without including their owners, EF Core cannot track them properly.
+
+So we use `.AsNoTracking()` to make the query non-tracking.
+
+## Client Side of Orders
+
+First create order model.ts in features/orders folder.
+Then create ordersApi.ts in features/orders folder.
+
+Updated CheckoutPage.tsx to create order after payment is successful.
+
+When Razorpay succeeds, you typically get:
+
+handler: function (response) {
+response.razorpay_order_id
+response.razorpay_payment_id
+response.razorpay_signature
+}
+
+Since we create order right after payment success, we continue from there.
+
+### Razorpay vs Stripe – Card Details Summary
+
+❌ Razorpay does NOT support frontend card previews
+
+There is no equivalent to Stripe’s:
+
+confirmationToken.payment_method_preview.card
+
+Razorpay never exposes:
+
+card brand
+
+last 4 digits
+
+expiry month/year
+on the frontend, at any stage.
+
+This is intentional for PCI compliance.
+
+✅ What Razorpay gives on the frontend
+
+Only this, after checkout success:
+
+{
+razorpay_payment_id,
+razorpay_order_id,
+razorpay_signature
+}
+
+No card metadata. Ever.
+
+Thus, we are changing PaymentSummary to only have paymentId, OrderId, and status in backend as well.
+
+```csharp
+using System;
+using Microsoft.EntityFrameworkCore;
+
+namespace API.Entities.OrderAggregate;
+
+[Owned]
+public class PaymentSummary
+{
+    public required string RzpPaymentId { get; set; }
+    public required string RzpOrderId { get; set; }
+    public required string RzpSignature { get; set; }
+}
+```
+
+npm install js-cookie
+
+To remove basketId cookie after order creation in CheckoutPage.tsx
+
+```typescript
+clearBasket: builder.mutation<void, void>({
+  queryFn: () => ({data: undefined}),
+  onQueryStarted: async (_, {dispatch}) => {
+    dispatch(
+      basketAPI.util.updateQueryData("fetchBasket", undefined, (draft) => {
+        draft.items = [];
+        draft.basketId = '';
+      })
+    );
+    Cookies.remove('basketId');;
+  }
+}),
+```
+
+We pass payment details in order to create order via CreateOrder mutation, from within PaymentStep.tsx and invalidate cache using clearBasket.
+
+We use state to pass order data received to CheckoutSuccessPage.tsx to show order details.
+
+we use unwrap, because we get response usually wrapped in an object (wrapper) by default, and to get original structure back we unwrap it.
+
+Added a checker to verify payment while creating order.
+
+```csharp
+public async Task<bool> ConfirmRazorpayPaymentAsync(PaymentSummary paymentSummary)
+    {
+        var razorpayOrderId = paymentSummary.RzpOrderId;
+        var razorpayPaymentId = paymentSummary.RzpPaymentId;
+        var razorpaySignature = paymentSummary.RzpSignature;
+        try
+        {
+            // 1Verify Razorpay signature (authenticity)
+            var attributes = new Dictionary<string, string>
+        {
+            { "razorpay_order_id", razorpayOrderId },
+            { "razorpay_payment_id", razorpayPaymentId },
+            { "razorpay_signature", razorpaySignature }
+        };
+
+            Utils.verifyPaymentSignature(attributes);
+            var _razorpayClient = new RazorpayClient(_keyId, _keySecret);
+
+            //  Fetch payment from Razorpay (authority check)
+            var payment = _razorpayClient.Payment.Fetch(razorpayPaymentId);
+
+            // 3Ensure payment belongs to this order
+            if (payment["order_id"]?.ToString() != razorpayOrderId)
+                return false;
+
+            // Ensure money was actually captured
+            if (payment["status"]?.ToString() != "captured")
+                return false;
+
+            //  Load your store order
+            var order = await context.Orders
+                .FirstOrDefaultAsync(o => o.OrderId == razorpayOrderId);
+
+            if (order == null)
+                return false;
+
+            // 6️Verify amount (paise)
+            if ((int)payment["amount"] != order.Amount)
+                return false;
+
+            // 7 Idempotency check (already paid)
+            if (order.Status == "paid")
+                return true;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+```
+
+# Finally: Publishing
+
+Azure + CI/CD
+
+## Added home page
+
+## Creating Production build
+
+We're going to use .Net kestral server, the web API server to host our client application.
+We make sure that when clientbrowser goes to localhost 5001, we're going to configure our API to return contents of a root folder and client will effectively download our react application and then use that downloaded code.
+
+Go to `vite.congig.ts` and specify build property. inside config
+
+```ts
+build:{
+    outDir: '../API/wwwroot'
+  },
+```
+
+Create production version of env file `.env.production`.
+
+```ts
+VITE_RAZORPAY_KEY_ID=rzp_test_Rr3UQO6CfSeK0N
+VITE_API_URL=/api
+```
+
+Before this we need to update customBaseQuery in `baseAPI.ts` to:
+
+```ts
+const customBaseQuery = fetchBaseQuery({
+  baseUrl: import.meta.env.VITE_API_URL,
+  credentials: "include",
+});
+```
+
+also over there we introduced delay using `sleep()`, which we don't need any more in production mode.
+So we let it happen in dev mode only.
+
+```ts
+if (import.meta.env.DEV) await sleep();
+```
+
+Now lets build our application...
+
+If we check in `package.json` to see cmd to compile our script to js code.
+
+```json
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build", <this one>
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+```
+
+So we just do `npm run build`
+
+I got some silent errors that i left before, highlighted. Resolved them.
+
+Now translation is done and got new dir at `API/wwwroot` and a single page as this is SPA sitting in index.html.
+
+But we still got some warnings:
+
+```cmd
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 1m 46s
+```
+
+So we tweek `vite.config.ts` more.
+
+```ts
+build: {
+    outDir: "../API/wwwroot",
+    chunkSizeWarningLimit: 1024,
+    emptyOutDir: true
+  },
+```
+
+and run again.
+
+We will get different index .js and .css files imported in index.html, if we update code.
+
+```html
+<script type="module" crossorigin src="/assets/index-65pj7xft.js"></script>
+<link rel="stylesheet" crossorigin href="/assets/index-De7bnZP4.css" />
+```
+
+## How to run that from API
+
+But all those are static assets and our API server is not configured to return static assets from here.
+So for now 5001 don't return anything.
+
+So we now need few more tweeks in Program.cs. Ordering is very important here.
+
+We need to add 2 middlewares:
+
+- Just after adding Exception Middleware. Add `app.UseDefaultFiles();`. This Enables default file mapping on the current path. Files are served from the path specified in IWebHostEnvironment.WebRootPath or IWebHostEnvironment.WebRootFileProvider which defaults to the 'wwwroot' subfolder.
+- And we also need to tell it to return static files. Next to the previous one, add `app.UseStaticFiles()`.
+
+Now we can see thing loaded. But if we navigate to anywhere and refresh, it colapses.
+
+```
+This localhost page can’t be found
+No webpage was found for the web address: https://localhost:5001/catalog
+HTTP ERROR 404
+```
+
+Only `https://localhost:5001` works.
+
+We need to tell our api to use a fall back option if it does not recognise the root, then it need to pass that to react application which dos have react router and can handle that particular root. So a typical approach to do this is to use a fall back controller.
+
+Back to API controllers, lets create new class file. This is not a API endpoint controller.
+
+Microsoft.AspNetCore.Mvc's Controller base class for an MVC controller with view support. and index.html is basically a view.
+
+This controllers purpose is to return only index.html view.
+
+```cs
+using System;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+
+namespace API.Controllers;
+
+[AllowAnonymous]
+public class FallbackController: Controller //  base class for an MVC controller with view support.
+{
+    public IActionResult Index()
+    {
+        return PhysicalFile(Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "index.html"), "text/HTML");
+    }
+}
+```
+
+And we specify this when to be triggered in `program.cs`.
+
+Just before DB initialization, keep this (among mappers):
+
+```cs
+app.MapFallbackToController("Index", "Fallback");
+```
+
+## Sitching to SQL server
+
+Lets use docker desktop.
+Create in root directory, `docker-compose.yml` where we specify which file to run. yml files are fussy.
+
+```yml
+version: "3.9"
+
+services:
+  sql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: storeapp-sql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Password@1"
+    ports:
+      - "1433:1433"
+    volumes:
+      - sql-data:/var/opt/mssql
+
+volumes:
+  sql-data:
+```
+
+and in root dir run `docker compose up -d`.
+
+Image created.
+
+Now update connection string in appsettings.Development.json to:
+
+```json
+  "ConnectionStrings": {
+    "DefaultConnection": "Server=localhost,1433;Database=shop;User Id=sa;Password=Password@1;TrustServerCertificate=True;"
+  },
+```
+
+****\*\*****\*\*****\*\*****\*\*****\*\*****\*\*****\*\*****\_****\*\*****\*\*****\*\*****\*\*****\*\*****\*\*****\*\*****^\_\_ because we are using self-signed certificates here.
+
+We now need new nuget package for SQL server. `Microsoft.EntityFrameworkCore.SqlServer`.
+We can also remove Sqlite package now in API.csproj.
+
+Since our project is based on dotnet 9, we need to install version 9.0.4 of that package.
+
+```xml
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="9.0.4" />
+```
+
+And in program.cs class, we need to update DB context to use Sql server.
+
+```csharp
+builder.Services.AddDbContext<StoreContext>(opt =>
+{
+    opt.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"));
+});
+```
+
+If we check migrations, they do used sqlite specific data types and functions. so we neet to remove existing migrations and create new migrations for sql server.
+So delete Migrations folder in API project.
+
+Then run:
+
+```cmd
+dotnet ef migrations add SqlServerInitial -o Data/Migrations
+```
+
+and migration is created.
+
+check docker desktop to see if sql server container is running.
+or run `docker ps` in cmd.
+If no container is running, run `docker compose up -d` again.
+
+Restart application.
+
+Now we see many logs showing many tables created in sql server database.
+
+We did few errors in initdb that we kept return type for async method as void instead of Task. Which failed silently and we didn't get db initialized and no products are shown in catalog page.
+
+Also keep await in front of initdb method call in Program.cs `await DbInitializer.InitDb(app);`.
+
+No first lets drop existing database and let application create new one with tables. From API terminal run:
+
+```cmd
+dotnet ef database drop
+```
+
+And run dotnet watch again.
+
+Now we see many logs showing more than before, tables created in sql server database.
+
+And success! We see products in catalog page.
+
+## AZURE
+
+We are going to use free Azure Services available with free account.
+
+Azure>Pricing>Free services>Databases>SQL Database
+
+**Limits:** 100000 vCore Seconds (Last for only 2 days) /month, but can be paused when not in use. 32GB storage. Don't charge, just stops after limit is reached.
+
+We are also gonna use Azure App Service to host our API and Client application.
+
+**Limits:** 10 web, mobile, or API apps with 1 GB storage each 1hr per day.
+
+Go to azure portal and click on creat resource
+
+I got an issue
+
+```txt
+Selected user account does not exist in tenant 'Microsoft Services' and cannot access the application '0a2057a8-149c-40ca-859e-98de032535fb' in that tenant. The account needs to be added as an external user in the tenant first. Please use a different account.:
+```
+
+For this i refered youtube...
+
+- search for MS business basic
+- Try for free
+- Fill details
+- set up a new account
+- company name etc as your wish
+- then it might ask PAN card details
+- Then it creates account
+- Then we are thaken to payment page, which we can skip for now as we are using free services.
+- `karrilakshminarasimhareddy@storistiq.onmicrosoft.com`
+  **Didn't work**
+
+- Search microsoft devoloper program
+- Click `join now`
+
+- go to azure portal
+
+`Nothing Worked!`
+
+Password@1
+
+### Why?
+
+Microsoft is no longer accepting non tenant accounts to do anything with their services. So we may need to shift to other cloud services. "Microsoft (MS) is increasingly restricting access for non-tenant (external/guest) accounts to specific organizational services for better security, primarily through Microsoft Entra Tenant Restrictions (TR), which blocks unwanted tenants and allows controlled access to specific apps or resources, meaning external users can't just access anything unless explicitly invited or allowed via guest accounts or Multi-Tenant Organizations (MTOs)"
+
+### Alternative: AWS Free Tier
+
+- Go to aws.amazon.com
+- New account `***`
+- choose free plan
+- Fill details etc...
+- Taken to Console
+- Search for IAM and click it
+- Setup MFA (Named RootMFA)
+- Create an admin user via IAM>Users>Create user
+  - Given user name `***`
+  - toogle `provide user access to AWS Management Console`
+  - ***
+  - attach policies `AdministratorAccess`
+  - Next>create user
+  - Link in bookmarks
+- Now we see Console Sign-in link. Copy that for future use.
+- `https://***/console`
+- Enable billing alarms
+
+  - To do this follow `https://docs.aws.amazon.com/IAM/latest/UserGuide/getting-started-account-iam.html?icmpid=docs_iam_console#tutorial-billing-step1`
+  - Bills > Billing preferences > toogle `Receive Billing Alerts` > save preferences
+
+  for more follow `https://www.youtube.com/watch?v=CjKhQoYeR4Q&t=105s`
+
+## Configuring AWS
+
+2nd. Following steps from `https://www.youtube.com/watch?v=tfjAE6hiN5c&t=1s` to deploy ASP.NET Core app to AWS EC2 instance.
+
+- name of user in priniple given to .pem file with all permissions: 'NITHISH/laksh'
+- Connection process:
+  - Open terminal
+  - cd to .pem file location
+  - run `ssh -i "Storistiq-store-keypair.pem" ec2-user@ec2-54-221-175-89.compute-1.amazonaws.com`
+- Install dotnet 9.0.11 sdk and runtime
+- Directory created: Storistiq
+
+1st. And to create a sql server: `https://www.youtube.com/watch?v=rtLZWtGO7uE`.
+
+- Name given: ***
+- Master username: ***
+- Password: ***
+
+- We can connect sql server to an EC2 instance from here.
+- First create EC2 instance.
+  - Name given: ***
+  - AWS linux 2023 AMI
+  - created key pair name: Storistiq-store-keypair
+  - .pem, RSA stored in :D/Storistiq AWS
+  - Instance created.
+  - aws kms key: aws/rds
+  - ID: alias/aws/rds
+  - Make Modify > connectivity > Additional configuration > Public accessibility: Yes
+  - Security group inbound rules:
+    - Type: MS SQL, Protocol: TCP, Port range: 1433, Source: My IP
+
+Testing connection from EC2 to RDS sql server:
+
+```cmd
+   18  ssh -i "Storistiq-store-keypair.pem" ec2-user@ec2-54-221-175-89.compute-1.amazonaws.com
+   19  sudo yum install -y mssql-tools unixODBC-devel
+   20  exec bash
+   21  sudo curl -o /etc/yum.repos.d/mssql-release.repo https://packages.microsoft.com/config/rhel/9/prod.repo
+   22  sudo yum install -y unixODBC unixODBC-devel
+   23  sudo ACCEPT_EULA=Y yum install -y mssql-tools
+   24  echo 'export PATH="$PATH:/opt/mssql-tools/bin"' >> .bash_profile
+   25  exec bash
+   26  sqlcmd -?
+   27  echo 'export PATH="$PATH:/opt/mssql-tools/bin"' >> ~/.bashrc
+   28  exec bash
+   29  sqlcmd -?
+   30  nc -vz storistiq-store.cctam8oaaezv.us-east-1.rds.amazonaws.com 1433
+   31  sudo yum install -y nmap-ncat
+   32  nc -vz storistiq-store.cctam8oaaezv.us-east-1.rds.amazonaws.com 1433
+   33  history
+```
+
+Connection successful.
+
+```cmd
+[ec2-user@ip-172-31-31-83 ~]$ nc -vz storistiq-store.cctam8oaaezv.us-east-1.rds.amazonaws.com 1433
+Ncat: Version 7.93 ( https://nmap.org/ncat )
+Ncat: Connected to 172.31.96.59:1433.
+Ncat: 0 bytes sent, 0 bytes received in 0.02 seconds.
+```
+
+## Publishing
+
+Run: `dotnet publish -c Release -r linux-x64 -o ./bin/publish`
+in API project folder.
+
+As our ec2 instance is linux based.
+
+Then copy files to ec2 instance using scp.
+
+```cmd
+scp -r -i .\***-keypair.pem .\API\bin\publish\* ec2-user@ec2-54-221-175-89.compute-1.amazonaws.com:~/Storistiq
+```
+
+```cmd
+sudo yum install -y icu
+```
+
+```cmd
+nano appsettings.Production.json
+```
+
+Then:
+
+```json
+{
+  "ConnectionStrings": {
+    "DefaultConnection": "Server=storistiq-store.cctam8oaaezv.us-east-1.rds.amazonaws.com,1433;Database=***;User Id=***;Password=****;TrustServerCertificate=True;"
+  },
+  "RazorpaySettings": {
+    "KeyId": "****",
+    "SecretKey": "***e",
+    "WebhookSecret": "****"
+  }
+}
+```
+
+```cmd
+[ec2-user@ip-172-31-31-83 Storistiq]$ export ASPNETCORE_ENVIRONMENT=Production
+[ec2-user@ip-172-31-31-83 Storistiq]$ echo $ASPNETCORE_ENVIRONMENT
+```
+
+Adding into security group related to `Launch-wizard-1` inbound rules:
+
+- Type: Custom TCP, Protocol: TCP, Port range: 5000, Source: 0.0.0.0/0
+
+## Continuing with CI/CD setup
