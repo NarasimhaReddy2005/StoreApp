@@ -4,7 +4,7 @@ WORKDIR /src
 
 COPY . .
 WORKDIR /src/API
-RUN dotnet publish storeApp.API.csproj -c Release -o /app/publish
+RUN dotnet publish API.csproj -c Release -o /app/publish
 
 # ---------- Runtime stage ----------
 FROM mcr.microsoft.com/dotnet/aspnet:9.0
@@ -18,4 +18,4 @@ ENV ASPNETCORE_ENVIRONMENT=Production
 
 EXPOSE 10000
 
-ENTRYPOINT ["dotnet", "storeApp.API.dll"]
+ENTRYPOINT ["dotnet", "API.dll"]
