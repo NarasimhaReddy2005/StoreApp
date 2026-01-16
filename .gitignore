@@ -7,3 +7,4 @@ storeApp/README.md
 storeApp/API/API.http
 storeApp/client/.env.production
 storeApp/Storistiq-store-keypair.pem
+storeApp/API/appsettings.Development.json
