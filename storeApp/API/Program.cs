@@ -12,7 +12,7 @@ builder.Services.AddControllers();
 // since db context is used in many parts of our application, we are adding it as a service here
 builder.Services.AddDbContext<StoreContext>(opt =>
 {
-    opt.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"));
+    opt.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"));
 });
 // A connection string is a specially formatted string of 
 // text that specifies how an application should connect to a database.

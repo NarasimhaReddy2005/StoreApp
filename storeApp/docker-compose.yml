@@ -1,16 +1,17 @@
 version: "3.9"
 
 services:
-  sql:
-    image: mcr.microsoft.com/mssql/server:2022-latest
-    container_name: storeapp-sql
+  postgres:
+    image: postgres:16-alpine
+    container_name: storeapp-postgres
     environment:
-      ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: "Password@1"
+      POSTGRES_DB: storedb
+      POSTGRES_USER: storeuser
+      POSTGRES_PASSWORD: pgStore@1
     ports:
-      - "1433:1433"
+      - "5432:5432"
     volumes:
-      - sql-data:/var/opt/mssql
+      - pgdata:/var/lib/postgresql/data
 
 volumes:
-  sql-data:
+  pgdata:
