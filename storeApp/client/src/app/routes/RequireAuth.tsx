@@ -10,6 +10,16 @@ export default function RequireAuth() {
   if (!user) {
     return <Navigate to="/login" state={{ from: location }} />;
   }
+
+  const adminRoutes = [
+    '/inventory',
+    '/admin-dashboard' // does not exist
+  ]
+
+  if(adminRoutes.includes(location.pathname) && !user.roles.includes('Admin')){
+    return <Navigate to='/' replace /> // clicking back may take to inventory
+    // so we are replacing url itself
+  }
   return (
     <Outlet /> // our component is usually loaded up here
   );
