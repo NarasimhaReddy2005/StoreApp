@@ -1,6 +1,7 @@
 using API.Data;
 using API.Entities;
 using API.Middleware;
+using API.RequestHelpers;
 using API.Services;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -8,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
+builder.Services.Configure<CloudinarySettings>(builder.Configuration.GetSection("Cloudinary"));
 builder.Services.AddControllers();
 // since db context is used in many parts of our application, we are adding it as a service here
 builder.Services.AddDbContext<StoreContext>(opt =>
@@ -17,8 +19,10 @@ builder.Services.AddDbContext<StoreContext>(opt =>
 // A connection string is a specially formatted string of 
 // text that specifies how an application should connect to a database.
 builder.Services.AddCors(); // enable Cross-Origin Resource Sharing (CORS) (A web future for security)
+builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
 builder.Services.AddTransient<ExceptionMiddleware>();
-
+builder.Services.AddScoped<ImageService>();
+builder.Services.AddScoped<PaymentsService>();
 builder.Services.AddIdentityApiEndpoints<User>(
     opt =>
     {
@@ -26,7 +30,6 @@ builder.Services.AddIdentityApiEndpoints<User>(
         // some rules for passwords are default by .Net. So we need not specify them
     }
 ).AddRoles<IdentityRole>().AddEntityFrameworkStores<StoreContext>();
-builder.Services.AddScoped<PaymentsService>();
 builder.Services.AddHttpClient<CurrencyService>();
 
 var app = builder.Build();
