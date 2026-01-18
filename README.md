@@ -734,7 +734,7 @@ Now in main.tsx file we need to replace app with routerProvider.
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <RouterProvider router={router} />
-  </StrictMode>
+  </StrictMode>,
 );
 ```
 
@@ -1280,7 +1280,7 @@ const { id } = useParams(); // Type is string | undefined (since it comes from t
 // guarantee that it will always be defined)
 
 const { data: product, isLoading } = useFetchProductDetailsQuery(
-  id ? parseInt(id) : 0
+  id ? parseInt(id) : 0,
 );
 
 if (!product || isLoading) return <div>Loading...</div>;
@@ -1311,7 +1311,7 @@ const sleep = () => new Promise((resolve) => setTimeout(resolve, 1000));
 export const baseQueryWithErrorHandling = async (
   args: string | FetchArgs,
   api: BaseQueryApi,
-  extraOptions: object
+  extraOptions: object,
 ) => {
   await sleep();
   const results = await customBaseQuery(args, api, extraOptions);
@@ -2871,12 +2871,12 @@ onQueryStarted: async ({ product, quantity }, { dispatch, queryFulfilled }) => {
   const patchResult = dispatch(
     basketAPI.util.updateQueryData("fetchBasket", undefined, (draft) => {
       const existingItem = draft.items.find(
-        (item) => item.productId == product.id
+        (item) => item.productId == product.id,
       );
       if (existingItem) existingItem.quantity += quantity;
       // else create basketItem
       else draft.items.push(new Item(product, quantity));
-    })
+    }),
   );
 
   try {
@@ -2943,7 +2943,7 @@ useEffect(() => {
 }, [item]);
 
 const { data: product, isLoading } = useFetchProductDetailsQuery(
-  id ? parseInt(id) : 0
+  id ? parseInt(id) : 0,
 );
 
 if (!product || isLoading) return <div>Loading...</div>;
@@ -2991,7 +2991,7 @@ Change to this:
 draft.items.push(
   isBasketItem(product)
     ? product
-    : { ...product, productId: product.id, quantity }
+    : { ...product, productId: product.id, quantity },
 );
 ```
 
@@ -5329,7 +5329,7 @@ Now update connection string in appsettings.Development.json to:
   },
 ```
 
-****\*\*****\*\*****\*\*****\*\*****\*\*****\*\*****\*\*****\_****\*\*****\*\*****\*\*****\*\*****\*\*****\*\*****\*\*****^\_\_ because we are using self-signed certificates here.
+because we are using self-signed certificates here.
 
 We now need new nuget package for SQL server. `Microsoft.EntityFrameworkCore.SqlServer`.
 We can also remove Sqlite package now in API.csproj.
@@ -5433,23 +5433,22 @@ Microsoft is no longer accepting non tenant accounts to do anything with their s
 ### Alternative: AWS Free Tier
 
 - Go to aws.amazon.com
-- New account `***`
+- New account `NarasimhaAsDev`
 - choose free plan
 - Fill details etc...
 - Taken to Console
 - Search for IAM and click it
 - Setup MFA (Named RootMFA)
 - Create an admin user via IAM>Users>Create user
-  - Given user name `***`
+  - Given user name `NarasimhaAsDEV`
   - toogle `provide user access to AWS Management Console`
-  - ***
+  - StoristiqDev@1
   - attach policies `AdministratorAccess`
   - Next>create user
   - Link in bookmarks
 - Now we see Console Sign-in link. Copy that for future use.
-- `https://***/console`
+- `https://165690631062.signin.aws.amazon.com/console`
 - Enable billing alarms
-
   - To do this follow `https://docs.aws.amazon.com/IAM/latest/UserGuide/getting-started-account-iam.html?icmpid=docs_iam_console#tutorial-billing-step1`
   - Bills > Billing preferences > toogle `Receive Billing Alerts` > save preferences
 
@@ -5466,16 +5465,17 @@ Microsoft is no longer accepting non tenant accounts to do anything with their s
   - run `ssh -i "Storistiq-store-keypair.pem" ec2-user@ec2-54-221-175-89.compute-1.amazonaws.com`
 - Install dotnet 9.0.11 sdk and runtime
 - Directory created: Storistiq
+-
 
 1st. And to create a sql server: `https://www.youtube.com/watch?v=rtLZWtGO7uE`.
 
-- Name given: ***
-- Master username: ***
-- Password: ***
+- Name given: Storistiq-store
+- Master username: NarasimhaAsAdmin
+- Password: StoristiqStoreMA
 
 - We can connect sql server to an EC2 instance from here.
 - First create EC2 instance.
-  - Name given: ***
+  - Name given: Storistiq-EC2
   - AWS linux 2023 AMI
   - created key pair name: Storistiq-store-keypair
   - .pem, RSA stored in :D/Storistiq AWS
@@ -5509,12 +5509,21 @@ Testing connection from EC2 to RDS sql server:
 
 Connection successful.
 
-```cmd
+```cs
 [ec2-user@ip-172-31-31-83 ~]$ nc -vz storistiq-store.cctam8oaaezv.us-east-1.rds.amazonaws.com 1433
 Ncat: Version 7.93 ( https://nmap.org/ncat )
 Ncat: Connected to 172.31.96.59:1433.
 Ncat: 0 bytes sent, 0 bytes received in 0.02 seconds.
 ```
+
+While reconnecting: Go to `Instance>Connect` copy paste cmd in your terminal.
+
+- Security group, that sql server is attached to `rds-ec2-1 (sg-05dc2360b224ac96c)`
+
+In order to permantly stop sql server, we can take a snapshot of sql server and delete it. It can be later restored.
+
+- When restored select `rds-ec2-1 (sg-05dc2360b224ac96c)` as security groups
+- In `appsettings.Production.json` change `Connection String` to `storistiq-store-restored.xxxxxx.rds.amazonaws.com`...
 
 ## Publishing
 
@@ -5526,7 +5535,7 @@ As our ec2 instance is linux based.
 Then copy files to ec2 instance using scp.
 
 ```cmd
-scp -r -i .\***-keypair.pem .\API\bin\publish\* ec2-user@ec2-54-221-175-89.compute-1.amazonaws.com:~/Storistiq
+scp -r -i .\Storistiq-store-keypair.pem .\API\bin\publish\* ec2-user@ec2-54-221-175-89.compute-1.amazonaws.com:~/Storistiq
 ```
 
 ```cmd
@@ -5542,23 +5551,692 @@ Then:
 ```json
 {
   "ConnectionStrings": {
-    "DefaultConnection": "Server=storistiq-store.cctam8oaaezv.us-east-1.rds.amazonaws.com,1433;Database=***;User Id=***;Password=****;TrustServerCertificate=True;"
+    "DefaultConnection": "Server=storistiq-store.cctam8oaaezv.us-east-1.rds.amazonaws.com,1433;Database=storistiq-store;User Id=NarasimhaAsAdmin;Password=StoristiqStoreMA;TrustServerCertificate=True;"
   },
   "RazorpaySettings": {
-    "KeyId": "****",
-    "SecretKey": "***e",
-    "WebhookSecret": "****"
+    "KeyId": "rzp_test_Rr3UQO6CfSeK0N",
+    "SecretKey": "5BPPkSBL2d1DFlKHBeb1Vwye",
+    "WebhookSecret": "BCS0028-store-20201086"
   }
 }
 ```
 
 ```cmd
-[ec2-user@ip-172-31-31-83 Storistiq]$ export ASPNETCORE_ENVIRONMENT=Production
-[ec2-user@ip-172-31-31-83 Storistiq]$ echo $ASPNETCORE_ENVIRONMENT
+export ASPNETCORE_ENVIRONMENT=Production
+export ASPNETCORE_URLS=http://0.0.0.0:5000
+echo $ASPNETCORE_ENVIRONMENT
+dotnet API.dll
 ```
 
 Adding into security group related to `Launch-wizard-1` inbound rules:
 
 - Type: Custom TCP, Protocol: TCP, Port range: 5000, Source: 0.0.0.0/0
 
-## Continuing with CI/CD setup
+### to avoid costs
+
+- Took a snapshot of sql server.
+- Deleted sql server.
+- Stoped EC2 instance
+  No more aws billing headaches.
+
+## Deploying in Render
+
+Configuring app to accept postgress
+
+```cmd
+docker pull postgres:16-alpine
+```
+
+Updated Compose file:
+
+```docker
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: storeapp-postgres
+    environment:
+      POSTGRES_DB: storedb
+      POSTGRES_USER: storeuser
+      POSTGRES_PASSWORD: pgStore@1
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+```
+
+`docker compose up -d`
+
+In `appsettings.Development.json`:
+
+```
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Information"
+    }
+  },
+  "ConnectionStrings": {
+    "DefaultConnection": "Host=localhost;Port=5432;Database=storedb;Username=storeuser;Password=pgStore@1;"
+  },
+  "RazorpaySettings": {
+    "KeyId": "rzp_test_Rr3UQO6CfSeK0N",
+    "SecretKey": "5BPPkSBL2d1DFlKHBeb1Vwye",
+    "WebhookSecret": "BCS0028-store-20201086"
+  }
+}
+```
+
+Added new nuget for postgress and removed sql related ones.
+
+Also update this:
+
+```cs
+builder.Services.AddDbContext<StoreContext>(opt =>
+{
+    opt.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"));
+});
+```
+
+then apply migrations.
+
+## Continuing with CI/CD setup and Render
+
+- Create PostgreSQL on Render
+- Go to Render
+- New → PostgreSQL
+- Choose:
+  - Free / Starter
+  - Region close to users
+- Create DB
+  After creation, copy:
+- Internal Database URL
+
+storistiq-store
+Dbname: storistiq_store_1
+Dbuser: storeuser
+Copy internal database url: \*\*\*
+
+**NOTE**: This database only exist for one month.
+
+Create new web service.
+
+- Keep copied URL in env variables as ConnectionStrings\_\_DefaultConnection, and all other variables too
+  - RazorpaySettings\_\_WebhookSecret
+  - RazorpaySettings\_\_SecretKey
+  - RazorpaySettings\_\_KeyId
+- Dockerfile path: `storeApp/Dockerfile`
+
+Dockerfile:
+
+```c
+# ---------- Build stage ----------
+FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
+WORKDIR /src
+
+COPY . .
+WORKDIR /src/API
+RUN dotnet publish API.csproj -c Release -o /app/publish
+
+# ---------- Runtime stage ----------
+FROM mcr.microsoft.com/dotnet/aspnet:9.0
+WORKDIR /app
+
+COPY --from=build /app/publish .
+
+# Render uses port 10000
+ENV ASPNETCORE_URLS=http://0.0.0.0:10000
+ENV ASPNETCORE_ENVIRONMENT=Production
+
+EXPOSE 10000
+
+ENTRYPOINT ["dotnet", "API.dll"]
+
+```
+
+set connection string:
+
+Take:
+
+```yaml
+postgres://user:password@host/dbname
+```
+
+Convert to:
+
+```cs
+Host=host;Port=5432;Database=dbname;Username=user;Password=password;SSL Mode=Require;Trust Server Certificate=true
+```
+
+# The final part: CRUD operations and Roles
+
+Installed `Oh my posh`.
+
+To not kickoff render to use new code without testing, lets create a new branch.
+
+```cmd
+git checkout -b Inventory
+```
+
+## Creating Product
+
+DTOs>CreateProductDto
+
+Adding new endpoint in ProductsController.cs
+
+```cs
+    [HttpPost]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<Product>> CreateProduct(CreateProductDto createProductDto)
+    {
+        var product = new Product
+        {
+            Name = createProductDto.Name,
+            Description = createProductDto.Description,
+            Price = createProductDto.Price,
+            PictureUrl = createProductDto.PictureUrl,
+            Brand = createProductDto.Brand,
+            Type = createProductDto.Type,
+            QuantityInStock = createProductDto.QuantityInStock
+        };
+
+        _context.Products.Add(product);
+        await _context.SaveChangesAsync();
+
+        return CreatedAtAction(nameof(GetProduct), new { id = product.Id }, product);
+    }
+```
+
+But now lets use auto mapper for this:
+
+- Install Nugget Automappper 13.0.0 (Version is important)
+- Configure in Program.cs add new service just below add CORS:
+
+```cs
+builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
+```
+
+Now in ProductsController.cs add IMapper mapper; and initialize in constructor and use that in CreateProduct method.
+
+```cs
+    [HttpPost]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<Product>> CreateProduct(CreateProductDto createProductDto)
+    {
+        var product = _mapper.Map<Product>(createProductDto);
+
+        _context.Products.Add(product);
+        await _context.SaveChangesAsync();
+
+        return CreatedAtAction(nameof(GetProduct), new { id = product.Id }, product);
+    }
+```
+
+In API call,
+
+https://picsum.photos/500 is a placeholder image URL from the Picsum Photos service.
+
+Here’s what it means:
+
+picsum.photos is a free service that provides random placeholder images — commonly used by developers and designers when they need a quick image to fill space in layouts, mockups, or prototypes.
+
+When you visit https://picsum.photos/500 in your browser, it returns:
+
+A 500 × 500 pixel image
+
+The image is randomly chosen each time you load the link
+
+So the URL doesn’t point to one specific photo — it dynamically gives you a different random photo of the specified size (500 × 500) on each request.
+
+`{{$randomProductName}}` is a Postman Dynamic Variable
+
+- Built into Postman
+- Evaluated at request-send time
+- Replaced with a generated value before the HTTP request is sent
+- You don’t define it. Postman does.
+
+### similar built-in Postman dynamic variables
+
+| Variable                 | Example output                         |
+| ------------------------ | -------------------------------------- |
+| `{{$randomUUID}}`        | `7a5d9f9e-2c1a-4bcb-b9e4-0e5f9b0a6f3d` |
+| `{{$randomInt}}`         | `4832`                                 |
+| `{{$randomEmail}}`       | `alice23@test.com`                     |
+| `{{$randomProductName}}` | `Fantastic Rubber Table`               |
+| `{{$timestamp}}`         | `1705408234`                           |
+
+## Editing Product
+
+Refer to API/DTOs/UpdateProductDto.cs and ProductsController.cs > UpdateProduct method.
+
+In mapping profiles create new profile for UpdateProduct to Product mapping.
+
+## Deleting a Product
+
+Refer to ProductsController.cs > DeleteProduct method.
+
+## Adding Photo Uploading Capability
+
+Cloudinary.com
+
+We will get 25GiB storage and 25,000 transformations free per month. Thus we can store our product images here.
+
+Go to dashboard and get:
+
+- Cloud name
+- API secret
+- API keys
+  into appsettings.json
+
+```json
+  "Cloudinary": {
+    "CloudName": "dmyt1j6dj",
+    "ApiKey": "123456789012345",
+    "ApiSecret": "ABCDEFGHIJKLMNO-PQRSTUVWXYZ"
+  },
+```
+
+To access these, we use a new RequestHelper class `CloudinarySettings`. Using it, we can bind configuration values to a strongly typed class. This allows us to easily access Cloudinary settings throughout the application.
+
+In Program.cs, we register this configuration binding:
+
+```csharp
+builder.Services.Configure<CloudinarySettings>(builder.Configuration.GetSection("Cloudinary"));
+```
+
+Add a new nuget package `CloudinaryDotNet` version 1.27.9
+
+Create new service `ImageService.cs` to handle photo uploads to Cloudinary.
+
+- We can use `IOptions<CloudinarySettings>` to access Cloudinary configuration settings injected via dependency injection.
+- `IFormFile` represents a file sent with the HTTP request. It is commonly used in ASP.NET Core to handle file uploads from clients.
+- `using` keyword ensures that the `stream` object is properly disposed of after use, releasing any resources it holds.
+- Cloudinary provides the parameters object to specify upload options like file, folder, transformation, etc.
+- It also provides `UploadAsync` method to upload file asynchronously.
+- It also provides deletion of image by publicId via `DestroyAsync`.
+
+Add this service in Program.cs
+
+## Using image service in ProductsController
+
+Mentioning of publicId, we do get that from Cloudinary when we upload an image. It is a unique identifier for each uploaded image in Cloudinary. We store this publicId in our database along with the image URL. This allows us to easily reference, manage, and delete the image later if needed.
+
+So we need to update Product entity to have PublicId property. It must be optional in our case, since our existing products don't have images uploaded to Cloudinary yet while seeding.
+
+The add migrations and also update controller methods to use ImageService for uploading and deleting images when creating, updating, or deleting products.
+
+Also in CreateProduct dto, allow it to take IFormFile for image upload instead of URL string.
+
+CreateProduct controller method update:
+
+```cs
+if(productDto.File != null)
+{
+    var imageResult = await imageService.AddImageAsync(productDto.File);
+    if(imageResult.Error != null) return BadRequest(imageResult.Error.Message);
+
+    product.PictureUrl = imageResult.SecureUrl.ToString();
+    product.PublicId = imageResult.PublicId;
+}
+```
+
+## Edit and delete image options
+
+- Bring in properties of CreateProductDto into UpdateProductDto.cs
+- Make file upload optional
+- use similar code as in CreateProduct, in UpdateProduct method of ProductsController.cs to upload new image if provided.
+- also delete existing image from Cloudinary if publicId exists.
+
+```cs
+if(productDto.File != null)
+{
+    var imageResult = await imageService.AddImageAsync(productDto.File);
+    if(imageResult.Error != null) return BadRequest(imageResult.Error.Message);
+
+    if(!string.IsNullOrEmpty(product.PublicId))
+    {
+        var deleteResult = await imageService.DeleteImageAsync(product.PublicId);
+        if(deleteResult.Error != null) return BadRequest(deleteResult.Error.Message); // Or we can ignore
+    }
+
+    product.PictureUrl = imageResult.SecureUrl.AbsoluteUri;
+    product.PublicId = imageResult.PublicId;
+}
+```
+
+# To the Client side of CRUD operations
+
+- Create new feature folder `admin` in src/features.
+- Inside it create `inventoryPage.tsx` for managing products.
+- Add it to routes.
+
+## Adding zod schema
+
+Refer admin/ProductForm.tsx
+
+- create new schema `lib/schemas/createProductSchema.ts` for product form validation using zod.
+- Create a form component `admin/ProductForm.tsx` to handle both create and edit product forms.
+- Using react-hook-form with zod resolver for form validation.
+- Using useState, add editmode to toggle between create and edit modes.
+- Created a one liner utility component `app/shared/components/AppTextInput` to make a reusable component for text inputs with labels and error messages.
+  - it takes label, name and zod controller as props.
+  - Also we need to deal with props (ts)
+
+```ts
+type Props<T extends FieldValues> = {
+  label: string;
+  name: keyof T;
+} & UseControllerProps<T> &
+  TextFieldProps;
+```
+
+## Reusable select input
+
+Again new shared component `app/shared/components/AppSelectInput.tsx` to make a reusable component for select inputs with labels and error messages.
+
+Similar to AppTextInput but we will also have list of items to show in select dropdown.
+
+## Dropzone for image upload
+
+We have react-dropzone package for that.
+
+```cmd
+npm install react-dropzone
+```
+
+Similar to previous 2 components, create new shared component `app/shared/components/AppDropzone.tsx` for image upload using dropzone.
+
+```tsx
+type Props<T extends FieldValues> = {
+  name: keyof T;
+} & UseControllerProps<T>;
+
+export default function AppDropzone<T extends FieldValues>(props: Props<T>) {
+  const { fieldState, field } = useController({ ...props });
+
+  const onDrop = useCallback((acceptedFiles: File[]) => {
+    if (acceptedFiles && acceptedFiles.length > 0) {
+        const fileWithPreview = Object.assign(acceptedFiles[0], {
+            preview: URL.createObjectURL(acceptedFiles[0])
+        });
+        field.onChange(fileWithPreview);
+    }
+  }, [field]);
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop,
+  });
+  ...
+```
+
+What this means
+
+- T extends FieldValues
+  - FieldValues comes from react-hook-form
+  - It represents the shape of your form data (e.g. { image: File; name: string })
+  - Using a generic T makes this component form-agnostic and reusable
+
+- name: keyof T
+  - Ensures the name prop must be a valid field name from the form
+
+### How `keyof T` Controls String Names (Brief)
+
+- `keyof T` creates a **union of allowed string literals** from the keys of type `T`
+
+  ```ts
+  type Form = { image: File; price: number };
+  type Keys = keyof Form; // "image" | "price"
+  ```
+
+- When used as a prop:
+
+  ```ts
+  name: keyof T
+  ```
+
+  TypeScript **only allows those exact strings** at compile time.
+
+- Valid usage:
+
+  ```tsx
+  <AppDropzone<Form> name="image" />
+  ```
+
+- Invalid usage (compile-time error):
+
+  ```tsx
+  <AppDropzone<Form> name="thumbnail" />
+  ```
+
+- This works **only at TypeScript compile time**, not at JavaScript runtime.
+  - JavaScript sees all values as plain strings.
+  - TypeScript blocks invalid strings before the app runs.
+
+- Think of `keyof T` as:
+
+  > **A restricted vocabulary of allowed string literals, not runtime validation**
+
+* `& UseControllerProps<T>`
+  - Merges all props required by useController
+  - Includes things like:
+    - control
+    - rules
+    - defaultValue
+
+Connecting to React Hook Form (useController)
+
+It returns:
+
+- field
+  - { value, onChange, onBlur, ref }
+  - Used to read/write form state
+
+- fieldState
+  - { error, invalid, isTouched }
+  - Used for validation feedback
+
+Step-by-step
+
+1. useCallback
+   - Memoizes the function
+   - Prevents unnecessary re-renders
+   - Dependency: [field]
+
+2. acceptedFiles[0]
+   - Dropzone allows multiple files
+   - You only care about the first one
+
+3. Adding preview
+   - We are creating a new Object, with image and a url field `preview`
+   - `URL.createObjectURL(file)`
+   - Creates a temporary local URL
+   - Lets you show an image preview instantly
+   - No server upload needed
+
+Also add this transformation in create product schema
+
+```tsx
+const fileSchema = z
+  .instanceof(File)
+  .refine((file) => file.size > 0, {
+    message: "A file must be uploaded",
+  })
+  .transform((file) => ({ ...file, preview: URL.createObjectURL(file) }));
+```
+
+4. field.onChange(fileWithPreview)
+   - Updates React Hook Form state
+   - This is equivalent to typing in a normal <input />
+
+React hook Forms also provides us with `watch` functionality, that lets us observe form field values.
+
+- What it does
+  - Reads current form values without causing re-renders
+  - Reacts to user input instantly
+  - Useful for conditional UI, previews, or derived logic
+
+## Editing functionality
+
+Same form but prefilled text
+
+## Creating RTK queries
+
+refetch: forces query to be refetched.
+
+```ts
+const { data, refetch } = useFetchProductsQuery(productParams);
+```
+
+Also added a clean up function to clear form, after the job is done.
+
+By default, the query goes to backend as `application.json`, but we need it as form-data, as e did in postman before.
+
+So it failed, Silently!
+
+## Avoiding silent failure
+
+Before that, we shold not let it fail silently. We notify it to the admin. We did this for register form, already. But this time, we make it, reusable.
+
+In `client/lib/util.tsx`, lets implement this.
+
+- This is bit specific to react hook forms
+
+```ts
+export function handleApiError<T extends FieldValues>(
+  error: unknown,
+  setError: UseFormSetError<T>,
+  fieldNames: Path<T>[], // array of strings represinting schemes present in that createProductSchema
+) {
+  const apiError = (error as { message: string }) || {};
+  // take message from string or we don't know what format it came
+
+  if (apiError.message && typeof apiError.message === "string") {
+    const errorArray = apiError.message.split(","); // we get as CSV list
+
+    errorArray.forEach((e) => {
+      const matchedField = fieldNames.find((fieldName) =>
+        e.toLowerCase().includes(fieldName.toString().toLowerCase()),
+      );
+
+      if (matchedField) setError(matchedField, { message: e.trim() });
+    });
+  }
+}
+```
+
+And use it like this:
+
+```ts
+ catch (error) {
+      console.log(error);
+      handleApiError<CreateProductSchema>(error, setError, [
+        "brand",
+        "description",
+        "file",
+        "name",
+        "pictureUrl",
+        "price",
+        "quantityInStock",
+        "type",
+      ]);
+    }
+```
+
+`setError` by react-hook-forms lets you:
+
+- Add an error programmatically
+- Trigger errors from:
+  - API responses
+  - Business rules
+  - Cross-field logic
+- Show the error exactly like a validation error
+
+Now we are getting all the errors, back.
+
+## Setting up format
+
+As mentioned before:
+"By default, the query goes to backend as `application.json`, but we need it as form-data, as e did in postman before."
+
+Lets create a helper function to do this:
+
+```ts
+const createFormData = (items: FieldValues) => {
+  const formData = new FormData();
+  for (const key in items) {
+    formData.append(key, items[key]);
+  }
+};
+```
+
+Instead of passing data to [update/create]ProductMutation, lets use this formData.
+
+Also specify it's type `FormData` in adminApi as we are passing it to those mutations.
+
+Also instead of `{...data, id}` use `data.append('id', id.toString());`. Otherwise we cant surely say how it is formatting that data.
+
+## Removing form data persistence
+
+We need to `setSelectedProduct` to null, which is used in InventoryPage. Lets bring that here to ProductForm.
+
+I have also added option to type the brand and type by selecting the option `Other` in AppSelectInput.
+
+For that i have use this simple helper function:
+
+```tsx
+const handleChange = (value: string) => {
+  if (value === "Other") {
+    setShowInput(true);
+    field.onChange("");
+  } else {
+    setShowInput(false);
+    field.onChange(value);
+  }
+};
+```
+
+## At last: Protecting admin routes on the client
+
+Adding 403 forbidden case into baseApi. Since it returns absolute null, we need to specify info manually.
+
+We need to update `RequireAuth.tsx`
+
+``` ts
+  const adminRoutes = [
+    '/inventory',
+    '/admin-dashboard' // does not exist
+  ]
+
+  if(adminRoutes.includes(location.pathname) && !user.roles.includes('Admin')){
+    return <Navigate to='/' replace /> // clicking back may take to inventory
+    // so we are replacing url itself (kicks to homepage)
+  }
+```
+
+Lets also remove option that shows this link in non admin user.
+
+## Last Git commit with course
+
+Ran `npm run build`.
+
+Pushed, Created Pull Request, Git-hub Checked Pull request, and Merged Pull request.
+
+# Wrapping up
+
+I started this project sometime around June 2025, and today—19 January 2026—I’m finally wrapping it up.
+
+Although there are still a few unimplemented features like profile, contact, and coupons, I’ve covered everything that felt essential. More importantly, this project taught me a lot—about full-stack architecture, state management, authentication, payments, deployment, and, frankly, patience.
+
+At this point, I’m a bit tired of the project (or maybe just a little lazy 😅). I might come back in the future to clean things up or finish what’s left—especially the Razorpay payment flow, where I currently create the rzpayOrder and handle payment linking inside the same function, which I know isn’t ideal.
+
+The application was deployed on Render, but since the free-tier database expires every month, I’d have to recreate the database regularly just to keep it alive. Because of that, I’ve decided not to include a live deployment link here. Sorry about that!
+
+If you’ve scrolled this far—thank you.
+
+And if you explored the GitHub repo or went through the project files, I really appreciate the time you took.
+
+Hope you have a great day.
